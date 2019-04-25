@@ -1,0 +1,11 @@
+[package]
+name = "arc-fuse"
+version = "0.1.0"
+authors = ["jam1garner <jam1.mcleod@hotmail.com>"]
+edition = "2018"
+
+[dependencies]
+time = "0.1"
+libc = "0.2.51"
+fuse = "0.3.1"
+env_logger = "0.6.1"
