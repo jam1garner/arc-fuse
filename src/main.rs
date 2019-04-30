@@ -1,4 +1,6 @@
 extern crate fuse;
+extern crate zstd;
+extern crate memmap;
 extern crate env_logger;
 
 use std::env;
@@ -6,6 +8,8 @@ use std::ffi::OsStr;
 use time::Timespec;
 use libc::ENOENT;
 use fuse::{FileType, FileAttr, Filesystem, Request, ReplyData, ReplyEntry, ReplyAttr, ReplyDirectory};
+
+mod arc;
 
 const TTL: Timespec = Timespec {
     sec: 1,
@@ -134,9 +138,18 @@ impl Filesystem for HelloFS {
     }
 }
 
+fn get_args() -> Option<(std::ffi::OsString, std::ffi::OsString)> {
+    Some((
+        env::args_os().nth(1)?,
+        env::args_os().nth(2)?
+    ))
+}
+
 fn main() {
     env_logger::init();
-    if let Some(mountpoint) = env::args_os().nth(1) {
+    arc::Arc::open("/home/jam/e/Ultimate/300/data.arc");    
+
+    if let Some((arc_path, mountpoint)) = get_args() {
         let options = ["-o", "ro", "-o", "fsname=hello"]
             .iter()
             .map(|o| o.as_ref())
