@@ -2,6 +2,9 @@ extern crate fuse;
 extern crate zstd;
 extern crate memmap;
 extern crate env_logger;
+extern crate packed_struct;
+#[macro_use] extern crate arrayref;
+#[macro_use] extern crate packed_struct_codegen;
 
 use std::env;
 use std::ffi::OsStr;
@@ -147,7 +150,9 @@ fn get_args() -> Option<(std::ffi::OsString, std::ffi::OsString)> {
 
 fn main() {
     env_logger::init();
-    arc::Arc::open("/home/jam/e/Ultimate/300/data.arc");    
+    let arc = 
+        arc::Arc::open("/home/jam/e/Ultimate/300/data.arc")
+        .unwrap();
 
     if let Some((arc_path, mountpoint)) = get_args() {
         let options = ["-o", "ro", "-o", "fsname=hello"]
