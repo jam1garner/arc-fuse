@@ -92,6 +92,11 @@ impl ArcFS {
 }
 
 impl Filesystem for ArcFS {
+    fn init(&mut self, _req: &Request) -> Result<(), i32> {
+        println!("Arc successfully mounted");
+        Ok(())
+    }
+
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let parent = if parent == 1 { 0 } else { parent };
         if let Some(a) = self.arc.get_name(parent) {
@@ -155,6 +160,7 @@ impl Filesystem for ArcFS {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        let ino = if ino == 1 { 0 } else { ino };
         match self.arc.files.get(&ino) {
             Some(arc::ArcFileInfo::Directory) => {
                 reply.attr(&TTL, &FileAttr {
@@ -207,7 +213,8 @@ impl Filesystem for ArcFS {
 
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
         if let Some(data) = self.arc.get_file_data(ino) {
-            reply.data(&data[offset as usize..(offset + size as i64) as usize]);
+            reply.data(&data[offset as usize..
+                std::cmp::min((offset + size as i64) as usize, data.len())]);
         } else {
             reply.error(ENOENT);
         }
@@ -247,7 +254,6 @@ impl Filesystem for ArcFS {
             
             let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
             for (i, entry) in entries.into_iter().enumerate().skip(to_skip) {
-                println!("{}, {}, {:?}, {}", entry.0, i as i64, entry.1, entry.2);
                 reply.add(entry.0, i as i64, entry.1, entry.2);
             }
             reply.ok();
