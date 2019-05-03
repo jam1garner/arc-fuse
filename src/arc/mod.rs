@@ -37,6 +37,18 @@ pub struct Arc {
     pub dir_children: HashMap<u64, Vec<u64>>,
     pub files: HashMap<u64, ArcFileInfo>,
     pub stems: HashMap<u64, &'static str>,
+    pub file_infos: Vec<FileInformationPath>,
+    pub file_info_indices: Vec<FileInformationIndex>,
+    pub directories: Vec<DirectoryInfo>,
+    pub offsets1: Vec<DirectoryOffsets>,
+    pub offsets2: Vec<DirectoryOffsets>,
+    pub hash_folder_counts: Vec<FolderHashIndex>,
+    pub file_infos_v2: Vec<FileInfo2>,
+    pub file_info_sub_index: Vec<FileInfoSubIndex>,
+    pub sub_file_info_start: usize,
+    pub sub_file_infos1: Vec<SubFileInfo>,
+    pub sub_file_info_start2: usize,
+    pub sub_file_infos2: Vec<SubFileInfo>,
 }
 
 impl<'a> Arc {
@@ -52,11 +64,23 @@ impl<'a> Arc {
             stream_entries: vec![],
             stream_file_indices: vec![],
             stream_offset_entries: vec![],
+            file_infos: vec![],
             stream_paths: HashMap::new(),
             names: HashMap::new(),
             dir_children: HashMap::new(),
             files: HashMap::new(),
             stems: HashMap::new(),
+            file_info_indices: vec![],
+            directories: vec![],
+            offsets1: vec![],
+            offsets2: vec![],
+            hash_folder_counts: vec![],
+            file_infos_v2: vec![],
+            file_info_sub_index: vec![],
+            sub_file_info_start: 0,
+            sub_file_infos1: vec![],
+            sub_file_info_start2: 0,
+            sub_file_infos2: vec![],
         };
 
         arc.decompress_table().unwrap();
@@ -87,7 +111,10 @@ impl<'a> Arc {
             );
             ($s:expr, $n:expr) => (
                 pos += $s * $n;
-            )
+            );
+            ($n:expr) => (
+                pos += $n;
+            );
         }
 
         skip!(8, node_header_2.part1_count as usize);
@@ -101,9 +128,32 @@ impl<'a> Arc {
             }).collect();
         arc.stream_file_indices = Vec::from(read!(u32, node_header_2.part2_count as usize));
         arc.stream_offset_entries = Vec::from(read!(StreamOffsetEntry, node_header_2.part3_count as usize));
-        
+        let unk_counts = read!(u32, 2);
+        skip!(8, (unk_counts[0] as usize + unk_counts[1] as usize));
+
+        arc.file_infos = Vec::from(read!(FileInformationPath, node_header.file_info_count as usize));
+        arc.file_info_indices = Vec::from(read!(FileInformationIndex, node_header.unk_offset_size_count as usize));
+        let some_folder_thing = Vec::from(read!(SomeFolderThing, node_header.folder_count as usize));
+        arc.directories = Vec::from(read!(DirectoryInfo, node_header.folder_count as usize));
+        arc.offsets1 = Vec::from(read!(DirectoryOffsets, node_header.file_count1 as usize));
+        arc.offsets2 = Vec::from(read!(DirectoryOffsets, node_header.file_count2 as usize));
+        arc.hash_folder_counts = Vec::from(read!(FolderHashIndex, node_header.hash_folder_count as usize));
+        arc.file_infos_v2 = Vec::from(read!(FileInfo2, 
+                                node_header.file_information_count as usize +
+                                node_header.sub_file_count2 as usize
+                            ));
+        arc.file_info_sub_index = Vec::from(read!(FileInfoSubIndex,
+                                node_header.last_table_count as usize +
+                                node_header.sub_file_count2 as usize
+                            ));
+        arc.sub_file_info_start = pos;
+        arc.sub_file_infos1 = Vec::from(read!(SubFileInfo, node_header.sub_file_count as usize));
+        arc.sub_file_info_start2 = pos;
+        arc.sub_file_infos2 = Vec::from(read!(SubFileInfo, node_header.sub_file_count2 as usize));
+
         arc.load_hashes();
         arc.load_stream_files();
+        arc.load_compressed_files();
         // Arc tree
         // println!("Tree\n----");
         // arc.print_tree(0, 0);
@@ -268,6 +318,10 @@ impl<'a> Arc {
                 );
             }
         }
+    }
+
+    fn load_compressed_files(&mut self) {
+
     }
 }
 

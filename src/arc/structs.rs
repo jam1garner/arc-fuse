@@ -22,25 +22,25 @@ pub struct CompTableHeader {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct NodeHeader {
-    filesize: u32,
-    file_info_count: u32,
-    unk_offset_size_count: u32,
-    folder_count: u32,
+    pub filesize: u32,
+    pub file_info_count: u32,
+    pub unk_offset_size_count: u32,
+    pub folder_count: u32,
 
-    file_count1: u32,
+    pub file_count1: u32,
 
-    hash_folder_count: u32,
-    file_information_count: u32,
-    last_table_count: u32,
-    sub_file_count: u32,
+    pub hash_folder_count: u32,
+    pub file_information_count: u32,
+    pub last_table_count: u32,
+    pub sub_file_count: u32,
 
-    file_count2: u32,
-    sub_file_count2: u32,
-    unk11: u32,
-    unk1_10: u32,
-    unk2_10: u32,
-    unk13: u32,
-    unk14: u32,
+    pub file_count2: u32,
+    pub sub_file_count2: u32,
+    pub unk11: u32,
+    pub unk1_10: u32,
+    pub unk2_10: u32,
+    pub unk13: u32,
+    pub unk14: u32,
 }
 
 #[repr(C)]
@@ -82,4 +82,96 @@ pub struct StreamEntry {
 pub struct StreamOffsetEntry {
     pub size: u64,
     pub offset: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FileInformationPath {
+    pub path: u32,
+    pub directory_index: u32,
+    pub extension: u32,
+    pub file_table_path: u32,
+    pub parent: u32,
+    pub unk5: u32,
+    pub hash2: u32,
+    pub unk6: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FileInformationIndex {
+    pub some_indices: [u32; 2]
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SomeFolderThing {
+    pub hash: u32,
+    pub offset: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Hash40 {
+    pub hash: u32,
+    pub length: u8,
+    pub padding: [u8; 3],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DirectoryInfo {
+    pub path_hash: u32,
+    pub dir_offset_index: u32,
+    pub name: Hash40,
+    pub parent: Hash40,
+    pub extra_dis_re: u32,
+    pub extra_dis_re_length: u32,
+    pub file_name_start_index: u32,
+    pub file_info_count: u32,
+    pub child_dir_start_index: u32,
+    pub child_dir_count: u32,
+    pub flags: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct DirectoryOffsets {
+    pub offset: u64,
+    pub decomp_size: u32,
+    pub size: u32,
+    pub sub_data_start_index: u32,
+    pub sub_data_count: u32,
+    pub resource_index: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FolderHashIndex {
+    pub hash: u32,
+    pub count: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FileInfo2 {
+    pub hash_index: u32,
+    pub hash_index_2: u32,
+    pub sub_file_index: u32,
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FileInfoSubIndex {
+    pub some_indices:[u32; 3]
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SubFileInfo {
+    pub offset: u32,
+    pub comp_size: u32,
+    pub decomp_size: u32,
+    pub flags: u32,
 }
