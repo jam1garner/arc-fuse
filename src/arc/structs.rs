@@ -1,5 +1,3 @@
-use packed_struct::prelude::*;
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ArcHeader {

@@ -7,7 +7,6 @@ use std::mem;
 
 mod util;
 mod structs;
-mod parser;
 use crc::crc32;
 use structs::*;
 use memmap::Mmap;
@@ -15,30 +14,33 @@ use packed_struct::prelude::*;
 
 static HASH_STRINGS: &'static str = include_str!("hashes.txt");
 
-pub struct Arc {
-    file: File,
-    map: Mmap,
-    decomp_table: Vec<u8>,
-    stream_entries: Vec<StreamEntry>,
-    stream_file_indices: Vec<u32>,
-    stream_offset_entries: Vec<StreamOffsetEntry>,
-    names: HashMap<u32, &'static str>,
-    file_listing: FileNode,
-}
-
-pub enum FileNode {
-    UncompressedFile {
+#[derive(Debug, Clone)]
+pub enum ArcFileInfo {
+    Uncompressed {
         offset: u64,
         size: u64,
         flags: u32,
     },
-    Directory {
-        nodes: HashMap<&'static str, FileNode>
-    },
+    Directory,
     None
 }
 
+pub struct Arc {
+    pub file: File,
+    pub map: Mmap,
+    pub decomp_table: Vec<u8>,
+    pub stream_entries: Vec<StreamEntry>,
+    pub stream_file_indices: Vec<u32>,
+    pub stream_offset_entries: Vec<StreamOffsetEntry>,
+    pub names: HashMap<u64, &'static str>,
+    pub stream_paths: HashMap<u64, &'static str>,
+    pub dir_children: HashMap<u64, Vec<u64>>,
+    pub files: HashMap<u64, ArcFileInfo>,
+    pub stems: HashMap<u64, &'static str>,
+}
+
 impl<'a> Arc {
+    #[allow(unused_variables)]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         let file = File::open(path.as_ref())?;
         let map = unsafe { Mmap::map(&file) }?;
@@ -50,8 +52,11 @@ impl<'a> Arc {
             stream_entries: vec![],
             stream_file_indices: vec![],
             stream_offset_entries: vec![],
+            stream_paths: HashMap::new(),
             names: HashMap::new(),
-            file_listing: FileNode::None,
+            dir_children: HashMap::new(),
+            files: HashMap::new(),
+            stems: HashMap::new(),
         };
 
         arc.decompress_table().unwrap();
@@ -99,8 +104,46 @@ impl<'a> Arc {
         
         arc.load_hashes();
         arc.load_stream_files();
+        // Arc tree
+        // println!("Tree\n----");
+        // arc.print_tree(0, 0);
 
         Ok(arc)
+    }
+
+    pub fn get_name(&self, hash40: u64) -> Option<&&str> {
+        self.names.get(&hash40)
+            .or(self.stream_paths.get(&hash40))
+    }
+
+    pub fn get_file_data(&self, hash40: u64) -> Option<&'a [u8]> {
+        match self.files.get(&hash40) {
+            Some(ArcFileInfo::Uncompressed {
+                offset, size, flags: _
+            }) => {
+                unsafe {
+                    Some(mem::transmute(
+                        &self.map[*offset as usize..(offset+size) as usize]
+                    ))
+                }
+            }
+            _ => {
+                eprintln!("File not found");
+                None
+            }
+        }
+    }
+
+    fn print_tree(&self, node: u64, depth: u64) {
+        for _ in 0..depth {
+            print!("    ");
+        }
+        println!("{}", self.stems.get(&node).unwrap_or(&"error"));
+        if let Some(ArcFileInfo::Directory) = self.files.get(&node) {
+            for child in self.dir_children.get(&node).unwrap() {
+                self.print_tree(*child, depth + 1);
+            }
+        }
     }
 
     fn read_from_offset<T>(&self, offset: usize) -> &'a T {
@@ -148,30 +191,81 @@ impl<'a> Arc {
         let lines: Vec<&'static str> = HASH_STRINGS.split('\n').collect();
         for line in lines {
             self.names.insert(
-                crc32::checksum_ieee(line.as_bytes()),
+                Arc::hash40(line),
                 line
             );
         }
     }
 
-    fn make_dir_recursive() -> FileNode {
-        FileNode::None
+    pub fn hash40<S: AsRef<str>>(string: S) -> u64 {
+        crc32::checksum_ieee(string.as_ref().as_bytes()) as u64 +
+            ((string.as_ref().len() as u64) << 32)
+    }
+
+    fn add_dir(dirs: &mut HashMap<u64, Vec<u64>>, files: &mut HashMap<u64, ArcFileInfo>,
+               stems: &mut HashMap<u64, &'static str>, names: &mut HashMap<u64, &'static str>,
+               parent: &'static str, dir: &'static str) {
+        let parent_hash40 = Arc::hash40(parent);
+        let dir_hash40 = Arc::hash40(dir);
+        if !dirs.contains_key(&parent_hash40) {
+            dirs.insert(parent_hash40, vec![]);
+        }
+        let parent_children = dirs.get_mut(&parent_hash40).unwrap();
+        if dir_hash40 != 0 && !parent_children.contains(&dir_hash40) {
+            parent_children.push(dir_hash40);
+        }
+
+        if !dirs.contains_key(&dir_hash40) {
+            dirs.insert(dir_hash40, vec![]);
+        }
+        files.insert(dir_hash40, ArcFileInfo::Directory);
+        stems.insert(dir_hash40, dir.split("/").last().unwrap());
+        names.insert(dir_hash40, dir);
     }
 
     fn load_stream_files(&mut self) {
-        if let FileNode::None = self.file_listing {
-            self.file_listing = FileNode::Directory {
-                nodes: HashMap::new()
-            };
-        }
+        self.dir_children.insert(0, vec![]);
+        self.names.insert(0, "");
+        self.stems.insert(0, "");
+        self.files.insert(0, ArcFileInfo::Directory);
         for stream_file in &self.stream_entries {
-            if let Some(path) = self.names.get(&stream_file.hash) {
+            if let Some(path) = self.names.get(&(
+                stream_file.hash as u64 + ((stream_file.name_length as u64) << 32)
+            )) {
                 let path_components: Vec<&'static str> = path.split("/").collect();
                 let mut pos = 0;
+                let mut last: &'static str = "";
                 for dir in &path_components[..path_components.len()-1] {
+                    let dir_len = dir.len();
+                    let current = &path[0..pos + dir_len];
                     
-                    pos += 1 + dir.len();
+                    // Add directory
+                    Arc::add_dir(&mut self.dir_children, &mut self.files, &mut self.stems,
+                                 &mut self.stream_paths, last, current);
+                    
+                    last = current;
+                    pos += 1 + dir_len;
                 }
+                let stream_offset_entry = self.stream_offset_entries[
+                    self.stream_file_indices[stream_file.index as usize] as usize
+                ];
+                let file_hash40 = Arc::hash40(path);
+                self.files.insert(
+                    file_hash40,
+                    ArcFileInfo::Uncompressed {
+                        offset: stream_offset_entry.offset,
+                        size: stream_offset_entry.size,
+                        flags: stream_file.flags,
+                    }
+                );
+                self.dir_children
+                    .get_mut(&Arc::hash40(last))
+                    .unwrap()
+                    .push(file_hash40);
+                self.stems.insert(
+                    file_hash40,
+                    path_components[path_components.len() - 1]
+                );
             }
         }
     }
