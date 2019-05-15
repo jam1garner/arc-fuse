@@ -107,7 +107,9 @@ pub struct FileInformationIndex {
 #[derive(Debug, Clone, Copy)]
 pub struct SomeFolderThing {
     pub hash: u32,
-    pub offset: u32,
+    pub unk: u8,
+    pub index: u16,
+    pub padding: u8,
 }
 
 #[repr(C)]
