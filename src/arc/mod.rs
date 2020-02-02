@@ -7,6 +7,7 @@ use std::mem;
 
 mod util;
 mod structs;
+mod mem_file;
 use crc::crc32;
 use structs::*;
 use memmap::Mmap;
@@ -39,6 +40,7 @@ pub struct Arc {
     pub stems: HashMap<u64, &'static str>,
     pub file_infos: Vec<FileInformationPath>,
     pub file_info_indices: Vec<FileInformationIndex>,
+    pub dir_hash_to_index: Vec<SomeFolderThing>,
     pub directories: Vec<DirectoryInfo>,
     pub offsets1: Vec<DirectoryOffsets>,
     pub offsets2: Vec<DirectoryOffsets>,
@@ -71,6 +73,7 @@ impl<'a> Arc {
             files: HashMap::new(),
             stems: HashMap::new(),
             file_info_indices: vec![],
+            dir_hash_to_index: vec![],
             directories: vec![],
             offsets1: vec![],
             offsets2: vec![],
@@ -133,7 +136,7 @@ impl<'a> Arc {
 
         arc.file_infos = Vec::from(read!(FileInformationPath, node_header.file_info_count as usize));
         arc.file_info_indices = Vec::from(read!(FileInformationIndex, node_header.unk_offset_size_count as usize));
-        let some_folder_thing = Vec::from(read!(SomeFolderThing, node_header.folder_count as usize));
+        arc.dir_hash_to_index = Vec::from(read!(SomeFolderThing, node_header.folder_count as usize));
         arc.directories = Vec::from(read!(DirectoryInfo, node_header.folder_count as usize));
         arc.offsets1 = Vec::from(read!(DirectoryOffsets, node_header.file_count1 as usize));
         arc.offsets2 = Vec::from(read!(DirectoryOffsets, node_header.file_count2 as usize));
@@ -224,6 +227,7 @@ impl<'a> Arc {
         let node_offset = self.header().node_section_offset as usize;
         unsafe {
             let comp_table_header = self.read_from_offset::<CompTableHeader>(node_offset);
+            dbg!(comp_table_header);
             const S: usize = mem::size_of::<CompTableHeader>();
             mem::transmute(
                 &self.map[node_offset + S..node_offset + S + comp_table_header.comp_size as usize]
@@ -321,7 +325,9 @@ impl<'a> Arc {
     }
 
     fn load_compressed_files(&mut self) {
-
+        for dir in self.dir_hash_to_index.iter() {
+            
+        }
     }
 }
 
