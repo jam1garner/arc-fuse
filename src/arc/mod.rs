@@ -1,14 +1,13 @@
 #![allow(dead_code)]
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::fs::File;
 use std::io;
-use std::mem;
 
 mod util;
 mod structs;
 mod mem_file;
-use mem_file::{set_file, get_header, FilePtr, FilePtr64, FileSlice};
+use mem_file::{set_file, get_header, FilePtr64, FileSlice};
 use crc::crc32;
 use structs::*;
 use memmap::Mmap;
@@ -49,11 +48,11 @@ pub struct ArcInternal<'a> {
 pub struct Arc {
     pub file: File,
     pub map: Mmap,
-    pub names: HashMap<u64, &'static str>,
-    pub stream_paths: HashMap<u64, &'static str>,
-    pub dir_children: HashMap<u64, Vec<u64>>,
-    pub files: HashMap<u64, ArcFileInfo>,
-    pub stems: HashMap<u64, &'static str>,
+    pub names: BTreeMap<u64, &'static str>,
+    pub stream_paths: BTreeMap<u64, &'static str>,
+    pub dir_children: BTreeMap<u64, Vec<u64>>,
+    pub files: BTreeMap<u64, ArcFileInfo>,
+    pub stems: BTreeMap<u64, &'static str>,
 
     //pub decomp_table: Vec<u8>,
 }
@@ -67,11 +66,11 @@ impl<'a> Arc {
         let mut arc = Arc {
             file,
             map,
-            stream_paths: HashMap::new(),
-            names: HashMap::new(),
-            dir_children: HashMap::new(),
-            files: HashMap::new(),
-            stems: HashMap::new(),
+            stream_paths: BTreeMap::new(),
+            names: BTreeMap::new(),
+            dir_children: BTreeMap::new(),
+            files: BTreeMap::new(),
+            stems: BTreeMap::new(),
         };
 
         set_file(&*arc.map);
@@ -85,70 +84,51 @@ impl<'a> Arc {
         
         let count = node_header_2.part1_count as usize;
         let something = node_header_2.next_slice::<u64>(count);
-        /*something = *///skip!(8, node_header_2.part1_count as usize);
         let stream_entries_ptr = something.next_slice::<[u8; 0xC]>(count);
         let stream_entries = stream_entries_ptr.iter()
                                 .map(|a| StreamEntry::unpack(a))
                                 .collect::<Result<Vec<_>, _>>().unwrap();
-        /*arc.stream_entries =
-            (0..node_header_2.part1_count)
-            .map(|_|{
-                pos += 0xC;
-                StreamEntry::unpack(array_ref!(
-                        &arc.decomp_table[pos-0xC..pos],
-                0, 0xC)).unwrap()
-            }).collect();*/
+
         let count = node_header_2.stream_file_index_count as usize;
         let stream_file_indices = stream_entries_ptr.next_slice::<u32>(count);
-        //arc.stream_file_indices = Vec::from(read!(u32, stream_file_index_count));
+
         let count = node_header_2.stream_offset_entry_count as usize;
         let stream_offset_entries = stream_file_indices.next_slice::<StreamOffsetEntry>(count);
-        //arc.stream_offset_entries = Vec::from(read!(StreamOffsetEntry, node_header_2.part3_count as usize));
+
         let unk_counts = stream_offset_entries.next::<[u32; 2]>();
-        //let unk_counts = read!(u32, 2);
+
         let unk1 = unk_counts.next_slice::<u64>(unk_counts[0] as usize);
         let unk2 = unk1.next_slice::<u64>(unk_counts[1] as usize);
-        //skip!(8, (unk_counts[0] as usize + unk_counts[1] as usize));
 
         let file_infos = unk2.next_slice::<FileInformationPath>(node_header.file_info_count as _);
-        //arc.file_infos = Vec::from(read!(FileInformationPath, node_header.file_info_count as usize));
+
         let count = node_header.unk_offset_size_count as usize;
         let file_info_indices = file_infos.next_slice::<FileInformationIndex>(count);
-        //arc.file_info_indices = Vec::from(read!(FileInformationIndex, node_header.unk_offset_size_count as usize));
+
         let folder_count = node_header.folder_count as usize;
         let dir_hash_to_index = file_info_indices.next_slice::<SomeFolderThing>(folder_count);
-        //arc.dir_hash_to_index = Vec::from(read!(SomeFolderThing, node_header.folder_count as usize));
+
         let dirs = dir_hash_to_index.next_slice::<DirectoryInfo>(folder_count);
-        //arc.directories = Vec::from(read!(DirectoryInfo, node_header.folder_count as usize));
+
         let offsets1 = dirs.next_slice::<DirectoryOffsets>(node_header.file_count1 as _);
-        //arc.offsets1 = Vec::from(read!(DirectoryOffsets, node_header.file_count1 as usize));
         let offsets2 = offsets1.next_slice::<DirectoryOffsets>(node_header.file_count2 as _);
-        //arc.offsets2 = Vec::from(read!(DirectoryOffsets, node_header.file_count2 as usize));
+
         let count = node_header.hash_folder_count as usize;
         let hash_folder_counts = offsets2.next_slice::<FolderHashIndex>(count);
-        // arc.hash_folder_counts = Vec::from(read!(FolderHashIndex, node_header.hash_folder_count as usize));
+
         let count = node_header.file_information_count as usize + node_header.sub_file_count2 as usize;
         let file_infos_v2 = hash_folder_counts.next_slice::<FileInfo2>(count);
-        /*arc.file_infos_v2 = Vec::from(read!(FileInfo2, 
-                                node_header.file_information_count as usize +
-                                node_header.sub_file_count2 as usize
-                            ));*/
+
         let count = node_header.last_table_count as usize + node_header.sub_file_count2 as usize;
         let file_info_sub_index = file_infos_v2.next_slice::<FileInfoSubIndex>(count);
-        /*arc.file_info_sub_index = Vec::from(read!(FileInfoSubIndex,
-                                node_header.last_table_count as usize +
-                                node_header.sub_file_count2 as usize
-                            ));*/
+
         let count = node_header.sub_file_count as usize;
         let sub_file_infos1 = file_info_sub_index.next_slice::<SubFileInfo>(count);
         let sub_file_info_start = sub_file_infos1.inner_ptr();
-        //arc.sub_file_info_start = pos;
-        //arc.sub_file_infos1 = Vec::from(read!(SubFileInfo, node_header.sub_file_count as usize));
+
         let count = node_header.sub_file_count2 as usize;
         let sub_file_infos2 = sub_file_infos1.next_slice::<SubFileInfo>(count);
         let sub_file_info_start2 = sub_file_infos2.inner_ptr();
-        //arc.sub_file_info_start2 = pos;
-        //arc.sub_file_infos2 = Vec::from(read!(SubFileInfo, node_header.sub_file_count2 as usize));
 
         let arc_internal = ArcInternal {
             dir_hash_to_index: &dir_hash_to_index,
@@ -186,16 +166,12 @@ impl<'a> Arc {
             .or_else(||self.stream_paths.get(&hash40))
     }
 
-    pub fn get_file_data(&self, hash40: u64) -> Option<&'a [u8]> {
+    pub fn get_file_data(&self, hash40: u64) -> Option<FileSlice<u8>> {
         match self.files.get(&hash40) {
             Some(&ArcFileInfo::Uncompressed {
                 offset, size, ..
             }) => {
-                unsafe {
-                    Some(mem::transmute::<&[u8], &'a [u8]>(
-                        &*FileSlice::<u8>::new(offset as _, size as _)
-                    ))
-                }
+                Some(FileSlice::<u8>::new(offset as _, size as _))
             }
             _ => {
                 eprintln!("File not found");
@@ -213,12 +189,6 @@ impl<'a> Arc {
             for child in self.dir_children.get(&node).unwrap() {
                 self.print_tree(*child, depth + 1);
             }
-        }
-    }
-
-    fn read_from_offset<T>(&self, offset: usize) -> &'a T {
-        unsafe {
-            mem::transmute(self.map.as_ptr().offset(offset as isize))
         }
     }
 
@@ -249,8 +219,8 @@ impl<'a> Arc {
             ((string.as_ref().len() as u64) << 32)
     }
 
-    fn add_dir(dirs: &mut HashMap<u64, Vec<u64>>, files: &mut HashMap<u64, ArcFileInfo>,
-               stems: &mut HashMap<u64, &'static str>, names: &mut HashMap<u64, &'static str>,
+    fn add_dir(dirs: &mut BTreeMap<u64, Vec<u64>>, files: &mut BTreeMap<u64, ArcFileInfo>,
+               stems: &mut BTreeMap<u64, &'static str>, names: &mut BTreeMap<u64, &'static str>,
                parent: &'static str, dir: &'static str) {
         let parent_hash40 = Arc::hash40(parent);
         let dir_hash40 = Arc::hash40(dir);
