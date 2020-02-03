@@ -8,6 +8,7 @@ use std::mem;
 mod util;
 mod structs;
 mod mem_file;
+use mem_file::{set_file, get_header, FilePtr, FilePtr64, FileSlice};
 use crc::crc32;
 use structs::*;
 use memmap::Mmap;
@@ -29,7 +30,6 @@ pub enum ArcFileInfo {
 pub struct Arc {
     pub file: File,
     pub map: Mmap,
-    pub decomp_table: Vec<u8>,
     pub stream_entries: Vec<StreamEntry>,
     pub stream_file_indices: Vec<u32>,
     pub stream_offset_entries: Vec<StreamOffsetEntry>,
@@ -51,6 +51,8 @@ pub struct Arc {
     pub sub_file_infos1: Vec<SubFileInfo>,
     pub sub_file_info_start2: usize,
     pub sub_file_infos2: Vec<SubFileInfo>,
+
+    pub decomp_table: Vec<u8>,
 }
 
 impl<'a> Arc {
@@ -62,7 +64,6 @@ impl<'a> Arc {
         let mut arc = Arc {
             file,
             map,
-            decomp_table: vec![],
             stream_entries: vec![],
             stream_file_indices: vec![],
             stream_offset_entries: vec![],
@@ -84,12 +85,17 @@ impl<'a> Arc {
             sub_file_infos1: vec![],
             sub_file_info_start2: 0,
             sub_file_infos2: vec![],
+            decomp_table: vec![],
         };
 
-        arc.decompress_table().unwrap();
+        set_file(&*arc.map);
 
-        let node_header = arc.read_from_table::<NodeHeader>(0);
-        let node_header_2 = arc.read_from_table::<NodeHeader2>(0x100);
+        arc.decomp_table = arc.decompress_table().unwrap();
+
+        set_file(&arc.decomp_table);
+
+        let node_header = get_header::<NodeHeader>();
+        let node_header_2 = FilePtr64::<NodeHeader2>::new(0x100);
         
         let mut pos = 0x100 + mem::size_of::<NodeHeader2>();
         macro_rules! read {
@@ -219,26 +225,16 @@ impl<'a> Arc {
         }
     }
 
-    fn header(&self) -> &'a ArcHeader {
-        self.read_from_offset(0)
+    fn compressed_table(&self) -> FileSlice<u8> {
+        let header = get_header::<ArcHeader>();
+        let comp_table_hdr = &header.comp_table_header;
+        comp_table_hdr.next_slice(comp_table_hdr.comp_size as _)
     }
 
-    fn compressed_table(&self) -> &'a [u8] {
-        let node_offset = self.header().node_section_offset as usize;
-        unsafe {
-            let comp_table_header = self.read_from_offset::<CompTableHeader>(node_offset);
-            dbg!(comp_table_header);
-            const S: usize = mem::size_of::<CompTableHeader>();
-            mem::transmute(
-                &self.map[node_offset + S..node_offset + S + comp_table_header.comp_size as usize]
-            )
-        }
-    }
-
-    fn decompress_table(&mut self) -> io::Result<()> {
-        let compressed_table = io::Cursor::new(self.compressed_table());
-        self.decomp_table = zstd::stream::decode_all(compressed_table)?;
-        Ok(())
+    fn decompress_table(&mut self) -> io::Result<Vec<u8>> {
+        let compressed_table = self.compressed_table();
+        let compressed_table = io::Cursor::new(&*compressed_table);
+        zstd::stream::decode_all(compressed_table)
     }
     
     fn load_hashes(&mut self) {

@@ -2,6 +2,7 @@ use std::slice;
 use std::ops::Deref;
 use std::marker::PhantomData;
 use std::mem::{size_of, transmute};
+use std::borrow::Borrow;
 use std::sync::RwLock;
 use std::ops::Add;
 
@@ -41,50 +42,48 @@ pub type FilePtr64<T> = FilePtr<u64, T>;
 pub struct FileSlice<T: Sized>(usize, usize, PhantomData<[T]>);
 
 impl<P: Num, T> FilePtr<P, T> {
-    fn inner(&self) -> P {
+    pub fn inner(&self) -> P {
         self.0
     }
 
-    fn offset(&self, amt: P) -> FilePtr<P, T> {
+    pub fn offset(&self, amt: P) -> FilePtr<P, T> {
         FilePtr(self.0 + amt, PhantomData)
     }
 
-    fn slice(&self, size: usize) -> FileSlice<T> {
+    pub fn slice(&self, size: usize) -> FileSlice<T> {
         FileSlice(self.0.into(), size, PhantomData)
     }
 
-    fn next<U: Sized>(&self) -> FilePtr<usize, U> {
+    pub fn next<U: Sized>(&self) -> FilePtr<usize, U> {
         FilePtr(self.0.into() + size_of::<T>(), PhantomData)
     }
 
-    fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<U> {
+    pub fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<U> {
         FileSlice(self.0.into() + size_of::<T>(), size, PhantomData)
     }
 
-    fn new(ptr: P) -> Self {
+    pub fn new(ptr: P) -> Self {
         FilePtr(ptr, PhantomData)
     }
 }
 
 impl<T> FileSlice<T> {
-    fn as_file_ptr(&self) -> FilePtr<usize, T> {
+    pub fn as_file_ptr(&self) -> FilePtr<usize, T> {
         FilePtr(self.0, PhantomData)
     }
 
-    fn next<U: Sized>(&self) -> FilePtr<usize, U> {
+    pub fn next<U: Sized>(&self) -> FilePtr<usize, U> {
         FilePtr(self.0 + (size_of::<T>() * self.1), PhantomData)
     }
 
-    fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<T> {
+    pub fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<T> {
         FileSlice(self.0 + (size_of::<T>() * self.1), size, PhantomData)
     }
 
-    fn new(ptr: usize, size: usize) -> Self {
+    pub fn new(ptr: usize, size: usize) -> Self {
         FileSlice(ptr, size, PhantomData)
     }
 }
-
-use std::borrow::Borrow;
 
 impl<P: Num, T: Sized> Borrow<T> for FilePtr<P, T> {
     fn borrow(&self) -> &T {
