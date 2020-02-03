@@ -49,8 +49,8 @@ pub struct NodeHeader {
 pub struct NodeHeader2 {
     pub unk3: u32,
     pub part1_count: u32,
-    pub part2_count: u32,
-    pub part3_count: u32,
+    pub stream_file_index_count: u32,
+    pub stream_offset_entry_count: u32,
 
     pub unk5: u32,
     pub unk6: u32,

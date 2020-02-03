@@ -68,6 +68,14 @@ impl<P: Num, T> FilePtr<P, T> {
 }
 
 impl<T> FileSlice<T> {
+    pub fn inner_ptr(&self) -> usize {
+        self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.1
+    }
+
     pub fn as_file_ptr(&self) -> FilePtr<usize, T> {
         FilePtr(self.0, PhantomData)
     }
@@ -76,7 +84,7 @@ impl<T> FileSlice<T> {
         FilePtr(self.0 + (size_of::<T>() * self.1), PhantomData)
     }
 
-    pub fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<T> {
+    pub fn next_slice<U: Sized>(&self, size: usize) -> FileSlice<U> {
         FileSlice(self.0 + (size_of::<T>() * self.1), size, PhantomData)
     }
 
