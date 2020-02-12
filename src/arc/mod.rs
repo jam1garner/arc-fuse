@@ -13,7 +13,7 @@ use structs::*;
 use memmap::Mmap;
 use packed_struct::prelude::*;
 
-static HASH_STRINGS: &'static str = include_str!("hashes.txt");
+static HASH_STRINGS: &'static str = include_str!("hash40s.tsv");
 
 #[derive(Debug, Clone)]
 pub enum ArcFileInfo {
@@ -32,17 +32,19 @@ pub struct ArcInternal<'a> {
     pub stream_offset_entries: &'a [StreamOffsetEntry],
     pub file_infos: &'a [FileInformationPath],
     pub file_info_indices: &'a [FileInformationIndex],
-    pub dir_hash_to_index: &'a [SomeFolderThing],
+    pub dir_hash_to_index: &'a [HashIndexGroup],
     pub directories: &'a [DirectoryInfo],
-    pub offsets1: &'a [DirectoryOffsets],
-    pub offsets2: &'a [DirectoryOffsets],
-    pub hash_folder_counts: &'a [FolderHashIndex],
     pub file_infos_v2: &'a [FileInfo2],
     pub file_info_sub_index: &'a [FileInfoSubIndex],
+    pub sub_files: &'a [SubFileInfo],
+    pub quick_dirs: &'a [QuickDir],
+    /*pub offsets1: &'a [DirectoryOffsets],
+    pub offsets2: &'a [DirectoryOffsets],
+    pub hash_folder_counts: &'a [FolderHashIndex],
     pub sub_file_info_start: usize,
     pub sub_file_infos1: &'a [SubFileInfo],
     pub sub_file_info_start2: usize,
-    pub sub_file_infos2: &'a [SubFileInfo],
+    pub sub_file_infos2: &'a [SubFileInfo],*/
 }
 
 pub struct Arc {
@@ -53,12 +55,9 @@ pub struct Arc {
     pub dir_children: BTreeMap<u64, Vec<u64>>,
     pub files: BTreeMap<u64, ArcFileInfo>,
     pub stems: BTreeMap<u64, &'static str>,
-
-    //pub decomp_table: Vec<u8>,
 }
 
 impl<'a> Arc {
-    #[allow(unused_variables)]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         let file = File::open(path.as_ref())?;
         let map = unsafe { Mmap::map(&file) }?;
@@ -79,57 +78,111 @@ impl<'a> Arc {
 
         set_file(&decomp_table);
 
-        let node_header = get_header::<NodeHeader>();
-        let node_header_2 = FilePtr64::<NodeHeader2>::new(0x100);
-        
-        let count = node_header_2.part1_count as usize;
-        let something = node_header_2.next_slice::<u64>(count);
-        let stream_entries_ptr = something.next_slice::<[u8; 0xC]>(count);
+        let fs_header = get_header::<FileSystemHeader>();
+        let stream_header = FilePtr64::<StreamHeader>::new(0x100);
+
+        dbg!(stream_header.quick_dir_count);
+
+        // ArcCross names:
+        // streamUnk
+        let quick_dirs_ptr = stream_header.next_slice::<[u8; 0xC]>(stream_header.quick_dir_count as _);
+        let quick_dirs = quick_dirs_ptr.iter()
+                            .map(|a| QuickDir::unpack(a))
+                            .collect::<Result<Vec<_>, _>>().unwrap();
+        //println!("streamUnk: {:X}", quick_dirs_ptr.inner_ptr());
+        // streamHashToName
+        let count = stream_header.stream_hash_count as usize;
+        let stream_hashes = quick_dirs_ptr.next_slice::<u64>(count);
+        //println!("streamHashToName: {:X}", stream_hashes.inner_ptr());
+
+        // streamNameToHash
+        let stream_entries_ptr = stream_hashes.next_slice::<[u8; 0xC]>(count);
         let stream_entries = stream_entries_ptr.iter()
                                 .map(|a| StreamEntry::unpack(a))
                                 .collect::<Result<Vec<_>, _>>().unwrap();
+        //println!("streamNameToHash: {:X}", stream_entries_ptr.inner_ptr());
 
-        let count = node_header_2.stream_file_index_count as usize;
+        // streamIndexToFile
+        let count = stream_header.stream_file_index_count as usize;
         let stream_file_indices = stream_entries_ptr.next_slice::<u32>(count);
+        //println!("streamIndexToFile: {:X}", stream_file_indices.inner_ptr());
 
-        let count = node_header_2.stream_offset_entry_count as usize;
+        // streamOffsets
+        let count = stream_header.stream_offset_entry_count as usize;
         let stream_offset_entries = stream_file_indices.next_slice::<StreamOffsetEntry>(count);
+        //println!("streamOffsets: {:X}", stream_offset_entries.inner_ptr());
 
+        // ----- Compressed stuff ------
+        // unkCount1, unkCount2
         let unk_counts = stream_offset_entries.next::<[u32; 2]>();
+        dbg!(&*unk_counts);
+        //println!("unkCount1: {:X}", unk_counts.inner());
 
-        let unk1 = unk_counts.next_slice::<u64>(unk_counts[0] as usize);
-        let unk2 = unk1.next_slice::<u64>(unk_counts[1] as usize);
+        // fileInfoUnknownTable
+        let file_info_unks = unk_counts.next_slice::<FileInformationUnknownTable>(unk_counts[1] as usize);
+        //println!("fileInfoUnknownTable: {:X}", file_info_unks.inner_ptr());
 
-        let file_infos = unk2.next_slice::<FileInformationPath>(node_header.file_info_count as _);
+        // filePathToIndexHashGroup
+        let hash_index_groups = file_info_unks.next_slice::<HashIndexGroup>(unk_counts[0] as usize);
+        //println!("filePathToIndexHashGroup: {:X}", hash_index_groups.inner_ptr());
 
-        let count = node_header.unk_offset_size_count as usize;
+        // fileInfoPath
+        let file_infos = hash_index_groups
+                            .next_slice::<FileInformationPath>(fs_header.file_info_path_count as _);
+        //println!("fileInfoPath: {:X}", file_infos.inner_ptr());
+
+        // fileInfoIndex
+        let count = fs_header.file_info_index_count as usize;
         let file_info_indices = file_infos.next_slice::<FileInformationIndex>(count);
+        //println!("fileInfoIndex: {:X}", file_info_indices.inner_ptr());
 
-        let folder_count = node_header.folder_count as usize;
-        let dir_hash_to_index = file_info_indices.next_slice::<SomeFolderThing>(folder_count);
+        // directoryHashGroup
+        let folder_count = fs_header.folder_count as usize;
+        let dir_hash_to_index = file_info_indices.next_slice::<HashIndexGroup>(folder_count);
+        //println!("directoryHashGroup: {:X}", dir_hash_to_index.inner_ptr());
 
+        // directoryList
         let dirs = dir_hash_to_index.next_slice::<DirectoryInfo>(folder_count);
+        //println!("directoryList: {:X}", dirs.inner_ptr());
 
-        let offsets1 = dirs.next_slice::<DirectoryOffsets>(node_header.file_count1 as _);
-        let offsets2 = offsets1.next_slice::<DirectoryOffsets>(node_header.file_count2 as _);
+        use std::mem::size_of;
+        dbg!(size_of::<DirectoryOffsets>());
 
-        let count = node_header.hash_folder_count as usize;
-        let hash_folder_counts = offsets2.next_slice::<FolderHashIndex>(count);
+        // directoryOffsets
+        let folder_offsets = dirs.next_slice::<DirectoryOffsets>(
+            dbg!(fs_header.folder_offset_count_1) as usize +
+            dbg!(fs_header.folder_offset_count_2) as usize +
+            dbg!(fs_header.extra_folder) as usize
+        );
+        //println!("directoryOffsets: {:X}", folder_offsets.inner_ptr());
 
-        let count = node_header.file_information_count as usize + node_header.sub_file_count2 as usize;
-        let file_infos_v2 = hash_folder_counts.next_slice::<FileInfo2>(count);
+        // directoryChildHashGroup
+        let count = fs_header.hash_folder_count as usize;
+        let folder_child_hashes = folder_offsets.next_slice::<HashIndexGroup>(count);
+        //println!("directoryChildHashGroup: {:X}", folder_child_hashes.inner_ptr());
 
-        let count = node_header.last_table_count as usize + node_header.sub_file_count2 as usize;
+        // fileInfoV2
+        let count = fs_header.file_info_count as usize +
+                    fs_header.sub_file_count_2 as usize +
+                    fs_header.extra_count as usize;
+        let file_infos_v2 = folder_child_hashes.next_slice::<FileInfo2>(count);
+        //println!("fileInfoV2: {:X}", file_infos_v2.inner_ptr());
+
+        // fileInfoSubIndex
+        let count = fs_header.file_info_sub_index_count as usize +
+                    fs_header.sub_file_count_2 as usize +
+                    fs_header.extra_count_2 as usize;
         let file_info_sub_index = file_infos_v2.next_slice::<FileInfoSubIndex>(count);
+        //println!("fileInfoSubIndex: {:X}", file_info_sub_index.inner_ptr());
 
-        let count = node_header.sub_file_count as usize;
-        let sub_file_infos1 = file_info_sub_index.next_slice::<SubFileInfo>(count);
-        let sub_file_info_start = sub_file_infos1.inner_ptr();
+        // subFiles
+        let count = fs_header.file_info_sub_index_count as usize +
+                    fs_header.sub_file_count_2 as usize +
+                    fs_header.extra_count_2 as usize;
+        let sub_files = file_info_sub_index.next_slice::<SubFileInfo>(count);
+        //println!("subFiles: {:X}", sub_files.inner_ptr());
 
-        let count = node_header.sub_file_count2 as usize;
-        let sub_file_infos2 = sub_file_infos1.next_slice::<SubFileInfo>(count);
-        let sub_file_info_start2 = sub_file_infos2.inner_ptr();
-
+        // stream_entries, stream_offest_entries, stream_file_indices
         let arc_internal = ArcInternal {
             dir_hash_to_index: &dir_hash_to_index,
             directories: &dirs,
@@ -137,23 +190,18 @@ impl<'a> Arc {
             file_info_sub_index: &file_info_sub_index,
             file_infos: &file_infos,
             file_infos_v2: &file_infos_v2,
-            hash_folder_counts: &hash_folder_counts,
-            offsets1: &offsets1,
-            offsets2: &offsets2,
-            sub_file_info_start: sub_file_info_start,
-            sub_file_infos1: &sub_file_infos1,
-            sub_file_info_start2: sub_file_info_start2,
-            sub_file_infos2: &sub_file_infos2,
+            sub_files: &sub_files,
             stream_entries: stream_entries,
             stream_file_indices: &stream_file_indices,
             stream_offset_entries: &stream_offset_entries,
+            quick_dirs: &quick_dirs,
         };
 
         set_file(&arc.map);
 
         arc.load_hashes();
         arc.load_stream_files(&arc_internal);
-        arc.load_compressed_files();
+        arc.load_compressed_files(&arc_internal);
         // Arc tree
         // println!("Tree\n----");
         // arc.print_tree(0, 0);
@@ -161,9 +209,10 @@ impl<'a> Arc {
         Ok(arc)
     }
 
-    pub fn get_name(&self, hash40: u64) -> Option<&&str> {
+    pub fn get_name(&self, hash40: u64) -> Option<&str> {
         self.names.get(&hash40)
             .or_else(||self.stream_paths.get(&hash40))
+            .map(std::ops::Deref::deref)
     }
 
     pub fn get_file_data(&self, hash40: u64) -> Option<FileSlice<u8>> {
@@ -193,8 +242,8 @@ impl<'a> Arc {
     }
 
     fn compressed_table(&self) -> FileSlice<u8> {
-        let header = get_header::<ArcHeader>();
-        let comp_table_hdr = &header.comp_table_header;
+        let arc = get_header::<ArcHeader>();
+        let comp_table_hdr = &arc.file_system;
         comp_table_hdr.next_slice(comp_table_hdr.comp_size as _)
     }
 
@@ -205,13 +254,16 @@ impl<'a> Arc {
     }
     
     fn load_hashes(&mut self) {
-        let lines: Vec<&'static str> = HASH_STRINGS.split('\n').collect();
-        for line in lines {
-            self.names.insert(
-                Arc::hash40(line),
-                line
-            );
-        }
+        self.names = HASH_STRINGS.split('\n')
+            .filter_map(|line|{
+                let split: Vec<&'static str> = line.split('\t').collect();
+                if let &[hash, string] = &split[..] {
+                    Some((u64::from_str_radix(hash, 16).ok()?, string))
+                } else {
+                    None
+                }
+            })
+            .collect();
     }
 
     pub fn hash40<S: AsRef<str>>(string: S) -> u64 {
@@ -246,8 +298,9 @@ impl<'a> Arc {
         self.stems.insert(0, "");
         self.files.insert(0, ArcFileInfo::Directory);
         for stream_file in &arc.stream_entries {
+            let hash40 =stream_file.hash as u64 + ((stream_file.name_length as u64) << 32);
             if let Some(path) = self.names.get(&(
-                stream_file.hash as u64 + ((stream_file.name_length as u64) << 32)
+                hash40
             )) {
                 let path_components: Vec<&'static str> = path.split("/").collect();
                 let mut pos = 0;
@@ -283,11 +336,13 @@ impl<'a> Arc {
                     file_hash40,
                     path_components[path_components.len() - 1]
                 );
+            } else {
+                println!("Warning: hash 0x{:X} not found", hash40);
             }
         }
     }
 
-    fn load_compressed_files(&mut self) {
+    fn load_compressed_files(&mut self, arc: &ArcInternal) {
     }
 }
 

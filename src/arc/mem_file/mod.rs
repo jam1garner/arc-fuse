@@ -29,6 +29,10 @@ pub fn get_footer<T: Sized>() -> FilePtr<usize, T> {
     FilePtr::new(file.len() - size_of::<T>())
 }
 
+pub fn get_file_size() -> usize {
+    (*FILE.read().unwrap()).unwrap().len()
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct FilePtr<P: Num, T: Sized>(P, PhantomData<T>);
@@ -44,6 +48,10 @@ pub struct FileSlice<T: Sized>(usize, usize, PhantomData<[T]>);
 impl<P: Num, T> FilePtr<P, T> {
     pub fn inner(&self) -> P {
         self.0
+    }
+
+    pub fn usize_ptr(&self) -> FilePtr<usize, T> {
+        FilePtr::new(self.0.into())
     }
 
     pub fn offset(&self, amt: P) -> FilePtr<P, T> {

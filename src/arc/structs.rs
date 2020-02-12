@@ -1,14 +1,14 @@
-use super::mem_file::FilePtr64;
+use super::mem_file::{FilePtr32, FilePtr64};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ArcHeader {
     pub magic: u64, // 0xABCDEF9876543210
-    pub music_section_offset: u64,
-    pub file_section_offset:  u64,
-    pub file2_section_offset: u64,
-    pub comp_table_header: FilePtr64<CompTableHeader>,
-    pub unk_section_offset: u64,
+    pub music_section_offset: u64, // offset1
+    pub file_section_offset:  u64, // offset2
+    pub shared_section_offset: u64, // offset3
+    pub file_system: FilePtr64<CompTableHeader>, //offset4
+    pub unk_section_offset: FilePtr64<CompTableHeader>, // offset5
 }
 
 #[repr(C)]
@@ -17,52 +17,65 @@ pub struct CompTableHeader {
     pub header_size: u32, // 0x10
     pub decomp_size: u32,
     pub comp_size: u32,
-    pub next_table: u32,
+    pub section_size: u32,
 }
 
-#[repr(C)]
+#[repr(packed)]
 #[derive(Debug, Clone, Copy)]
-pub struct NodeHeader {
-    pub filesize: u32,
-    pub file_info_count: u32,
-    pub unk_offset_size_count: u32,
+pub struct FileSystemHeader {
+    pub table_filesize: u32,
+    pub file_info_path_count: u32,
+    pub file_info_index_count: u32,
     pub folder_count: u32,
 
-    pub file_count1: u32,
+    pub folder_offset_count_1: u32,
 
     pub hash_folder_count: u32,
-    pub file_information_count: u32,
-    pub last_table_count: u32,
+    pub file_info_count: u32,
+    pub file_info_sub_index_count: u32,
     pub sub_file_count: u32,
 
-    pub file_count2: u32,
-    pub sub_file_count2: u32,
-    pub unk11: u32,
-    pub unk1_10: u32,
-    pub unk2_10: u32,
-    pub unk13: u32,
-    pub unk14: u32,
+    pub folder_offset_count_2: u32,
+    pub sub_file_count_2: u32,
+    pub padding: u32,
+
+    pub unk1_10: u32, // always 0x10
+    pub unk2_10: u32, // always 0x10
+
+    pub regional_count_1: u8,
+    pub regional_count_2: u8,
+    pub padding2: u16,
+    
+    pub version: u32,
+    pub extra_folder: u32,
+    pub extra_count: u32,
+
+    pub unk: [u32; 2],
+
+    pub extra_count_2: u32,
+    pub extra_sub_count: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct NodeHeader2 {
-    pub unk3: u32,
-    pub part1_count: u32,
+pub struct StreamHeader {
+    pub quick_dir_count: u32,
+    pub stream_hash_count: u32,
     pub stream_file_index_count: u32,
     pub stream_offset_entry_count: u32,
+}
 
-    pub unk5: u32,
-    pub unk6: u32,
-    pub unk7: u32,
-    pub unk8: u32,
-
-    pub unk9: u32,
-    pub unk10: u32,
-    pub unk11: u32,
-
-    pub unk12: u32,
-    pub unk13: u32,
+#[derive(Debug, Clone, Copy, PackedStruct)]
+#[packed_struct(endian="lsb", bit_numbering="msb0")]
+pub struct QuickDir {
+    #[packed_field(bits="0..32")]
+    pub hash: u32,
+    #[packed_field(bits="32..40")]
+    pub name_length: u8,
+    #[packed_field(bits="40..64")]
+    pub count: u32,
+    #[packed_field(bits="64..96")]
+    pub index: u32,
 }
 
 #[derive(Debug, Clone, Copy, PackedStruct)]
@@ -94,7 +107,7 @@ pub struct FileInformationPath {
     pub file_table_path: u32,
     pub parent: u32,
     pub unk5: u32,
-    pub hash2: u32,
+    pub file_name: u32,
     pub unk6: u32,
 }
 
@@ -137,7 +150,7 @@ pub struct DirectoryInfo {
     pub flags: u32,
 }
 
-#[repr(C, packed)]
+#[repr(packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct DirectoryOffsets {
     pub offset: u64,
@@ -158,16 +171,22 @@ pub struct FolderHashIndex {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileInfo2 {
+    // PathIndex
     pub hash_index: u32,
+    // IndexIndex
     pub hash_index_2: u32,
+    // SubIndexIndex
     pub sub_file_index: u32,
+    // Flags
     pub flags: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileInfoSubIndex {
-    pub some_indices:[u32; 3]
+    pub folder_offset_index: u32,
+    pub sub_file_index: u32,
+    pub file_info_index_and_flag: u32,
 }
 
 #[repr(C)]
@@ -177,4 +196,25 @@ pub struct SubFileInfo {
     pub comp_size: u32,
     pub decomp_size: u32,
     pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StreamHashToName {
+    pub hash: u32,
+    pub name_index: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FileInformationUnknownTable {
+    pub some_index: u32,
+    pub some_index_2: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct HashIndexGroup {
+    pub hash: u32,
+    pub index: u32,
 }

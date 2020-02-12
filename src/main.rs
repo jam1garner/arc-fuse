@@ -3,7 +3,6 @@ extern crate zstd;
 extern crate memmap;
 extern crate env_logger;
 extern crate packed_struct;
-#[macro_use] extern crate arrayref;
 #[macro_use] extern crate packed_struct_codegen;
 
 use std::env;
@@ -11,7 +10,6 @@ use std::ffi::OsStr;
 use std::path::Path;
 use time::Timespec;
 use libc::ENOENT;
-use std::collections::HashMap;
 use fuse::{FileType, FileAttr, Filesystem, Request, ReplyData, ReplyEntry, ReplyAttr, ReplyDirectory};
 
 mod arc;
@@ -24,59 +22,6 @@ const TTL: Timespec = Timespec {
 const UNIX_EPOCH: Timespec = Timespec {
     sec: 0,
     nsec: 0,
-};
-
-const HELLO_DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH,                                  // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
-
-const TEST_DIR_ATTR: FileAttr = FileAttr {
-    ino: 2,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH,                                  // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
-
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
-
-const HELLO_TXT_ATTR: FileAttr = FileAttr {
-    ino: 3,
-    size: 13,
-    blocks: 1,
-    atime: UNIX_EPOCH,                                  // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::RegularFile,
-    perm: 0o644,
-    nlink: 1,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
 };
 
 struct ArcFS {
@@ -100,7 +45,7 @@ impl Filesystem for ArcFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let parent = if parent == 1 { 0 } else { parent };
         if let Some(a) = self.arc.get_name(parent) {
-            let file_path = String::from(a.clone()) +
+            let file_path = String::from(a) +
                 if a.len() != 0 { "/" } else { "" } +
                 name.to_str().unwrap();
             
