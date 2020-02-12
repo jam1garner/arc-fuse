@@ -1,4 +1,4 @@
-use super::mem_file::{FilePtr32, FilePtr64};
+use super::mem_file::FilePtr64;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -98,17 +98,13 @@ pub struct StreamOffsetEntry {
     pub offset: u64,
 }
 
-#[repr(C)]
+#[repr(packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileInformationPath {
-    pub path: u32,
-    pub directory_index: u32,
-    pub extension: u32,
-    pub file_table_path: u32,
-    pub parent: u32,
-    pub unk5: u32,
-    pub file_name: u32,
-    pub unk6: u32,
+    pub path: HashIndexGroup,
+    pub ext: HashIndexGroup,
+    pub parent: HashIndexGroup,
+    pub file_name: HashIndexGroup,
 }
 
 #[repr(C)]
@@ -212,9 +208,15 @@ pub struct FileInformationUnknownTable {
     pub some_index_2: u32,
 }
 
-#[repr(C)]
+#[repr(packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct HashIndexGroup {
     pub hash: u32,
     pub index: u32,
+}
+
+impl HashIndexGroup {
+    pub fn hash40(&self) -> u64 {
+        self.hash as u64 + ((self.index as u64 & 0xFF) << 32)
+    }
 }

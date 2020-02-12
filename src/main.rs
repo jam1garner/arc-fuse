@@ -89,8 +89,27 @@ impl Filesystem for ArcFS {
                         flags: 0, 
                     }, 0);
                 }
+                Some(arc::ArcFileInfo::Compressed) => {
+                    // TODO
+                    reply.entry(&TTL, &FileAttr {
+                        ino: hash40,
+                        size: 0,
+                        blocks: 1,
+                        atime: UNIX_EPOCH,
+                        mtime: UNIX_EPOCH,
+                        ctime: UNIX_EPOCH,
+                        crtime: UNIX_EPOCH,
+                        kind: FileType::RegularFile,
+                        perm: 0o644,
+                        nlink: 1,
+                        uid: 501,
+                        gid: 20,
+                        rdev: 0,
+                        flags: 0, 
+                    }, 0);
+                }
                 None => {
-                    dbg!("File does not exist");
+                    dbg!("File does not exist", hash40);
                     reply.error(ENOENT);
                 }
                 _ => {
@@ -145,6 +164,25 @@ impl Filesystem for ArcFS {
                     flags: 0, 
                 });
             }
+            Some(arc::ArcFileInfo::Compressed) => {
+                // TODO
+                reply.attr(&TTL, &FileAttr {
+                    ino,
+                    size: 0,
+                    blocks: 1,
+                    atime: UNIX_EPOCH,
+                    mtime: UNIX_EPOCH,
+                    ctime: UNIX_EPOCH,
+                    crtime: UNIX_EPOCH,
+                    kind: FileType::RegularFile,
+                    perm: 0o644,
+                    nlink: 1,
+                    uid: 501,
+                    gid: 20,
+                    rdev: 0,
+                    flags: 0, 
+                });
+            }
             None => {
                 dbg!("File does not exist");
                 reply.error(ENOENT);
@@ -185,7 +223,7 @@ impl Filesystem for ArcFS {
                             }
                             Some(arc::ArcFileInfo::Uncompressed {
                                 offset: _, flags: _, size: _
-                            }) => {
+                            }) | Some(arc::ArcFileInfo::Compressed) => {
                                 FileType::RegularFile
                             }
                             _ => {

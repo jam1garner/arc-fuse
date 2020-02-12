@@ -13,7 +13,13 @@ use structs::*;
 use memmap::Mmap;
 use packed_struct::prelude::*;
 
-static HASH_STRINGS: &'static str = include_str!("hash40s.tsv");
+static HASH_STRINGS: ArcStr = include_str!("hash40s.tsv");
+
+macro_rules! unwrap_or_continue {
+    ($expr:expr) => {
+        if let Some(x) = $expr { x } else { continue }
+    };
+}
 
 #[derive(Debug, Clone)]
 pub enum ArcFileInfo {
@@ -22,15 +28,18 @@ pub enum ArcFileInfo {
         size: u64,
         flags: u32,
     },
+    Compressed,
     Directory,
     None
 }
+
+type ArcStr = &'static str;
 
 pub struct ArcInternal<'a> {
     pub stream_entries: Vec<StreamEntry>,
     pub stream_file_indices: &'a [u32],
     pub stream_offset_entries: &'a [StreamOffsetEntry],
-    pub file_infos: &'a [FileInformationPath],
+    pub file_info_paths: &'a [FileInformationPath],
     pub file_info_indices: &'a [FileInformationIndex],
     pub dir_hash_to_index: &'a [HashIndexGroup],
     pub directories: &'a [DirectoryInfo],
@@ -38,23 +47,16 @@ pub struct ArcInternal<'a> {
     pub file_info_sub_index: &'a [FileInfoSubIndex],
     pub sub_files: &'a [SubFileInfo],
     pub quick_dirs: &'a [QuickDir],
-    /*pub offsets1: &'a [DirectoryOffsets],
-    pub offsets2: &'a [DirectoryOffsets],
-    pub hash_folder_counts: &'a [FolderHashIndex],
-    pub sub_file_info_start: usize,
-    pub sub_file_infos1: &'a [SubFileInfo],
-    pub sub_file_info_start2: usize,
-    pub sub_file_infos2: &'a [SubFileInfo],*/
 }
 
 pub struct Arc {
     pub file: File,
     pub map: Mmap,
-    pub names: BTreeMap<u64, &'static str>,
-    pub stream_paths: BTreeMap<u64, &'static str>,
+    pub names: BTreeMap<u64, ArcStr>,
+    pub stream_paths: BTreeMap<u64, ArcStr>,
     pub dir_children: BTreeMap<u64, Vec<u64>>,
     pub files: BTreeMap<u64, ArcFileInfo>,
-    pub stems: BTreeMap<u64, &'static str>,
+    pub stems: BTreeMap<u64, ArcStr>,
 }
 
 impl<'a> Arc {
@@ -127,13 +129,13 @@ impl<'a> Arc {
         //println!("filePathToIndexHashGroup: {:X}", hash_index_groups.inner_ptr());
 
         // fileInfoPath
-        let file_infos = hash_index_groups
+        let file_info_paths = hash_index_groups
                             .next_slice::<FileInformationPath>(fs_header.file_info_path_count as _);
         //println!("fileInfoPath: {:X}", file_infos.inner_ptr());
 
         // fileInfoIndex
         let count = fs_header.file_info_index_count as usize;
-        let file_info_indices = file_infos.next_slice::<FileInformationIndex>(count);
+        let file_info_indices = file_info_paths.next_slice::<FileInformationIndex>(count);
         //println!("fileInfoIndex: {:X}", file_info_indices.inner_ptr());
 
         // directoryHashGroup
@@ -188,7 +190,7 @@ impl<'a> Arc {
             directories: &dirs,
             file_info_indices: &file_info_indices,
             file_info_sub_index: &file_info_sub_index,
-            file_infos: &file_infos,
+            file_info_paths: &file_info_paths,
             file_infos_v2: &file_infos_v2,
             sub_files: &sub_files,
             stream_entries: stream_entries,
@@ -256,7 +258,7 @@ impl<'a> Arc {
     fn load_hashes(&mut self) {
         self.names = HASH_STRINGS.split('\n')
             .filter_map(|line|{
-                let split: Vec<&'static str> = line.split('\t').collect();
+                let split: Vec<ArcStr> = line.split('\t').collect();
                 if let &[hash, string] = &split[..] {
                     Some((u64::from_str_radix(hash, 16).ok()?, string))
                 } else {
@@ -271,9 +273,8 @@ impl<'a> Arc {
             ((string.as_ref().len() as u64) << 32)
     }
 
-    fn add_dir(dirs: &mut BTreeMap<u64, Vec<u64>>, files: &mut BTreeMap<u64, ArcFileInfo>,
-               stems: &mut BTreeMap<u64, &'static str>, names: &mut BTreeMap<u64, &'static str>,
-               parent: &'static str, dir: &'static str) {
+    fn add_dir(&mut self, parent: ArcStr, dir: ArcStr) {
+        let dirs = &mut self.dir_children;
         let parent_hash40 = Arc::hash40(parent);
         let dir_hash40 = Arc::hash40(dir);
         if !dirs.contains_key(&parent_hash40) {
@@ -287,9 +288,25 @@ impl<'a> Arc {
         if !dirs.contains_key(&dir_hash40) {
             dirs.insert(dir_hash40, vec![]);
         }
-        files.insert(dir_hash40, ArcFileInfo::Directory);
-        stems.insert(dir_hash40, dir.split("/").last().unwrap());
-        names.insert(dir_hash40, dir);
+        self.files.insert(dir_hash40, ArcFileInfo::Directory);
+        self.stems.insert(dir_hash40, dir.split("/").last().unwrap());
+        self.stream_paths.insert(dir_hash40, dir);
+    }
+
+    
+    fn add_dirs(&mut self, path: ArcStr, path_components: &Vec<ArcStr>) -> ArcStr {
+        let mut pos = 0;
+        let mut last: ArcStr = "";
+        for dir in path_components.split_last().unwrap().1 {
+            let dir_len = dir.len();
+            let current = &path[0..pos + dir_len];
+            
+            self.add_dir(last, current);
+            
+            last = current;
+            pos += 1 + dir_len;
+        }
+        last
     }
 
     fn load_stream_files(&mut self, arc: &ArcInternal) {
@@ -298,30 +315,15 @@ impl<'a> Arc {
         self.stems.insert(0, "");
         self.files.insert(0, ArcFileInfo::Directory);
         for stream_file in &arc.stream_entries {
-            let hash40 =stream_file.hash as u64 + ((stream_file.name_length as u64) << 32);
-            if let Some(path) = self.names.get(&(
-                hash40
-            )) {
-                let path_components: Vec<&'static str> = path.split("/").collect();
-                let mut pos = 0;
-                let mut last: &'static str = "";
-                for dir in &path_components[..path_components.len()-1] {
-                    let dir_len = dir.len();
-                    let current = &path[0..pos + dir_len];
-                    
-                    // Add directory
-                    Arc::add_dir(&mut self.dir_children, &mut self.files, &mut self.stems,
-                                 &mut self.stream_paths, last, current);
-                    
-                    last = current;
-                    pos += 1 + dir_len;
-                }
+            let hash40 = stream_file.hash as u64 + ((stream_file.name_length as u64) << 32);
+            if let Some(&path) = self.names.get(&(hash40)) {
+                let path_components = path.split('/').collect();
+                let last = self.add_dirs(path, &path_components);
                 let stream_offset_entry = arc.stream_offset_entries[
                     arc.stream_file_indices[stream_file.index as usize] as usize
                 ];
-                let file_hash40 = Arc::hash40(path);
                 self.files.insert(
-                    file_hash40,
+                    hash40,
                     ArcFileInfo::Uncompressed {
                         offset: stream_offset_entry.offset,
                         size: stream_offset_entry.size,
@@ -331,10 +333,10 @@ impl<'a> Arc {
                 self.dir_children
                     .get_mut(&Arc::hash40(last))
                     .unwrap()
-                    .push(file_hash40);
+                    .push(hash40);
                 self.stems.insert(
-                    file_hash40,
-                    path_components[path_components.len() - 1]
+                    hash40,
+                    path_components.last().unwrap()
                 );
             } else {
                 println!("Warning: hash 0x{:X} not found", hash40);
@@ -343,6 +345,31 @@ impl<'a> Arc {
     }
 
     fn load_compressed_files(&mut self, arc: &ArcInternal) {
+        for file_info in arc.file_infos_v2 {
+            let path = arc.file_info_paths[file_info.hash_index as usize];
+            let file_hash40 = path.path.hash40();
+            let path_string = *unwrap_or_continue!(self.names.get(&file_hash40));
+
+            let path_components = path_string.split('/').collect();
+
+            let last = self.add_dirs(path_string, &path_components);
+
+            self.files.insert(
+                file_hash40,
+                ArcFileInfo::Compressed
+            );
+            let parent = self.dir_children
+                .get_mut(&Arc::hash40(last))
+                .unwrap();
+            if !parent.contains(&file_hash40) {
+                parent.push(file_hash40);
+            }
+            self.stems.insert(
+                file_hash40,
+                path_components.last().unwrap()
+            );
+        }
     }
 }
 
+const REGIONAL: u32 = 0x00000010;
