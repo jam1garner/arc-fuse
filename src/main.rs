@@ -24,6 +24,7 @@ const UNIX_EPOCH: Timespec = Timespec {
     nsec: 0,
 };
 
+
 struct ArcFS {
     pub arc: arc::Arc,
 }
@@ -69,12 +70,10 @@ impl Filesystem for ArcFS {
                             flags: 0, 
                     }, 0);
                 }
-                Some(arc::ArcFileInfo::Uncompressed {
-                    offset: _, size, flags: _
-                }) => {
+                Some(arc::ArcFileInfo::Uncompressed { data, .. }) => {
                     reply.entry(&TTL, &FileAttr {
                         ino: hash40,
-                        size: *size,
+                        size: data.len() as u64,
                         blocks: 1,
                         atime: UNIX_EPOCH,
                         mtime: UNIX_EPOCH,
@@ -89,11 +88,10 @@ impl Filesystem for ArcFS {
                         flags: 0, 
                     }, 0);
                 }
-                Some(arc::ArcFileInfo::Compressed) => {
-                    // TODO
+                Some(arc::ArcFileInfo::Compressed { decomp_size, .. }) => {
                     reply.entry(&TTL, &FileAttr {
                         ino: hash40,
-                        size: 0,
+                        size: *decomp_size,
                         blocks: 1,
                         atime: UNIX_EPOCH,
                         mtime: UNIX_EPOCH,
@@ -109,7 +107,8 @@ impl Filesystem for ArcFS {
                     }, 0);
                 }
                 None => {
-                    dbg!("File does not exist", hash40);
+                    //dbg!("File does not exist", hash40);
+                    //dbg!(a, file_path, name);
                     reply.error(ENOENT);
                 }
                 _ => {
@@ -144,12 +143,10 @@ impl Filesystem for ArcFS {
                         flags: 0, 
                 });
             }
-            Some(arc::ArcFileInfo::Uncompressed {
-                offset: _, size, flags: _
-            }) => {
+            Some(arc::ArcFileInfo::Uncompressed { data, .. }) => {
                 reply.attr(&TTL, &FileAttr {
                     ino,
-                    size: *size,
+                    size: data.len() as u64,
                     blocks: 1,
                     atime: UNIX_EPOCH,
                     mtime: UNIX_EPOCH,
@@ -164,11 +161,10 @@ impl Filesystem for ArcFS {
                     flags: 0, 
                 });
             }
-            Some(arc::ArcFileInfo::Compressed) => {
-                // TODO
+            Some(arc::ArcFileInfo::Compressed { decomp_size, .. }) => {
                 reply.attr(&TTL, &FileAttr {
                     ino,
-                    size: 0,
+                    size: *decomp_size,
                     blocks: 1,
                     atime: UNIX_EPOCH,
                     mtime: UNIX_EPOCH,
@@ -196,9 +192,9 @@ impl Filesystem for ArcFS {
 
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
         if let Some(data) = self.arc.get_file_data(ino) {
-            reply.data(&data[offset as usize..
-                std::cmp::min((offset + size as i64) as usize, data.len())]);
+            reply.data(&data.get_slice()[offset as usize..offset as usize + size as usize]);
         } else {
+            dbg!("Failed to get data");
             reply.error(ENOENT);
         }
     }
@@ -221,9 +217,8 @@ impl Filesystem for ArcFS {
                             Some(arc::ArcFileInfo::Directory) => {
                                 FileType::Directory
                             }
-                            Some(arc::ArcFileInfo::Uncompressed {
-                                offset: _, flags: _, size: _
-                            }) | Some(arc::ArcFileInfo::Compressed) => {
+                            Some(arc::ArcFileInfo::Uncompressed { ..  }) |
+                            Some(arc::ArcFileInfo::Compressed { .. }) => {
                                 FileType::RegularFile
                             }
                             _ => {

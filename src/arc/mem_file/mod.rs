@@ -6,6 +6,8 @@ use std::borrow::Borrow;
 use std::sync::RwLock;
 use std::ops::Add;
 
+use serde::{Serialize, Deserialize};
+
 #[cfg(test)]
 mod test;
 
@@ -34,7 +36,7 @@ pub fn get_file_size() -> usize {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct FilePtr<P: Num, T: Sized>(P, PhantomData<T>);
 
 pub type FilePtr8<T> = FilePtr<u8, T>;
@@ -42,7 +44,7 @@ pub type FilePtr16<T> = FilePtr<u16, T>;
 pub type FilePtr32<T> = FilePtr<u32, T>;
 pub type FilePtr64<T> = FilePtr<u64, T>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct FileSlice<T: Sized>(usize, usize, PhantomData<[T]>);
 
 impl<P: Num, T> FilePtr<P, T> {
@@ -140,11 +142,11 @@ impl<T: Sized> Deref for FileSlice<T> {
     fn deref(&self) -> &Self::Target {
         let file = (*FILE.read().unwrap()).unwrap();
 
-        if self.0 + (size_of::<T>() + self.1) > file.len() {
+        if self.0 + (size_of::<T>() * self.1) > file.len() {
             panic!(
                 "Out of bounds read 0x{:X} size 0x{:X} > file size 0x{:X}",
                 self.0,
-                size_of::<T>(),
+                size_of::<T>() * self.1,
                 file.len()
             );
         }
@@ -202,5 +204,11 @@ impl_into_usize!(u8, u16, u32, u64, usize);
 impl<P: Num, T: Sized> Into<usize> for FilePtr<P, T> {
     fn into(self) -> usize {
         self.inner().into()
+    }
+}
+
+impl<'a, T: Sized> Into<&'a [T]> for &'a FileSlice<T> {
+    fn into(self) -> &'a [T] {
+        &self
     }
 }

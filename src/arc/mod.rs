@@ -7,11 +7,13 @@ use std::io;
 mod util;
 mod structs;
 mod mem_file;
-use mem_file::{set_file, get_header, FilePtr64, FileSlice};
+use mem_file::{set_file, get_header, get_file_size as file_size, FilePtr64, FileSlice};
 use crc::crc32;
 use structs::*;
 use memmap::Mmap;
 use packed_struct::prelude::*;
+use cached::cached_key;
+use cached::SizedCache;
 
 static HASH_STRINGS: ArcStr = include_str!("hash40s.tsv");
 
@@ -21,14 +23,25 @@ macro_rules! unwrap_or_continue {
     };
 }
 
+cached_key!{
+    FILE_CACHE: SizedCache<u64, Option<Vec<u8>>> = SizedCache::with_size(50);
+    Key = { hash40 };
+    fn decompress_file(hash40: u64, file: FileSlice<u8>) -> Option<Vec<u8>> = {
+        let reader = io::Cursor::new(&*file);
+        zstd::decode_all(reader).ok()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ArcFileInfo {
     Uncompressed {
-        offset: u64,
-        size: u64,
+        data: FileSlice<u8>,
         flags: u32,
     },
-    Compressed,
+    Compressed {
+        data: FileSlice<u8>,
+        decomp_size: u64,
+    },
     Directory,
     None
 }
@@ -36,6 +49,7 @@ pub enum ArcFileInfo {
 type ArcStr = &'static str;
 
 pub struct ArcInternal<'a> {
+    pub arc_header: &'a ArcHeader,
     pub stream_entries: Vec<StreamEntry>,
     pub stream_file_indices: &'a [u32],
     pub stream_offset_entries: &'a [StreamOffsetEntry],
@@ -47,6 +61,7 @@ pub struct ArcInternal<'a> {
     pub file_info_sub_index: &'a [FileInfoSubIndex],
     pub sub_files: &'a [SubFileInfo],
     pub quick_dirs: &'a [QuickDir],
+    pub folder_offsets: &'a [DirectoryOffsets],
 }
 
 pub struct Arc {
@@ -76,6 +91,7 @@ impl<'a> Arc {
 
         set_file(&*arc.map);
 
+        let arc_header = &*get_header::<ArcHeader>();
         let decomp_table = arc.decompress_table().unwrap();
 
         set_file(&decomp_table);
@@ -178,14 +194,18 @@ impl<'a> Arc {
         //println!("fileInfoSubIndex: {:X}", file_info_sub_index.inner_ptr());
 
         // subFiles
-        let count = fs_header.file_info_sub_index_count as usize +
+        let count = fs_header.sub_file_count as usize +
                     fs_header.sub_file_count_2 as usize +
-                    fs_header.extra_count_2 as usize;
+                    fs_header.extra_count as usize;
         let sub_files = file_info_sub_index.next_slice::<SubFileInfo>(count);
         //println!("subFiles: {:X}", sub_files.inner_ptr());
+        let end = sub_files.next::<()>().inner();
+        dbg!(end);
+        dbg!(*fs_header);
 
         // stream_entries, stream_offest_entries, stream_file_indices
         let arc_internal = ArcInternal {
+            arc_header,
             dir_hash_to_index: &dir_hash_to_index,
             directories: &dirs,
             file_info_indices: &file_info_indices,
@@ -197,13 +217,15 @@ impl<'a> Arc {
             stream_file_indices: &stream_file_indices,
             stream_offset_entries: &stream_offset_entries,
             quick_dirs: &quick_dirs,
+            folder_offsets: &folder_offsets,
         };
-
-        set_file(&arc.map);
+        
 
         arc.load_hashes();
         arc.load_stream_files(&arc_internal);
         arc.load_compressed_files(&arc_internal);
+        set_file(&*arc.map);
+
         // Arc tree
         // println!("Tree\n----");
         // arc.print_tree(0, 0);
@@ -217,12 +239,22 @@ impl<'a> Arc {
             .map(std::ops::Deref::deref)
     }
 
-    pub fn get_file_data(&self, hash40: u64) -> Option<FileSlice<u8>> {
+    pub fn get_file_data(&self, hash40: u64) -> Option<FileSliceOrVec> {
         match self.files.get(&hash40) {
             Some(&ArcFileInfo::Uncompressed {
-                offset, size, ..
+                data, ..
             }) => {
-                Some(FileSlice::<u8>::new(offset as _, size as _))
+                Some(FileSliceOrVec::FileSlice(data))
+            }
+            Some(&ArcFileInfo::Compressed {
+                data, decomp_size
+            }) => {
+                if data.len() == decomp_size as usize {
+                    Some(FileSliceOrVec::FileSlice(data))
+                } else {
+                    let f = decompress_file(hash40, data)?;
+                    Some(FileSliceOrVec::Vec(f))
+                }
             }
             _ => {
                 eprintln!("File not found");
@@ -293,7 +325,6 @@ impl<'a> Arc {
         self.stream_paths.insert(dir_hash40, dir);
     }
 
-    
     fn add_dirs(&mut self, path: ArcStr, path_components: &Vec<ArcStr>) -> ArcStr {
         let mut pos = 0;
         let mut last: ArcStr = "";
@@ -322,11 +353,11 @@ impl<'a> Arc {
                 let stream_offset_entry = arc.stream_offset_entries[
                     arc.stream_file_indices[stream_file.index as usize] as usize
                 ];
+                let (offset, size) = (stream_offset_entry.offset as usize, stream_offset_entry.size as usize);
                 self.files.insert(
                     hash40,
                     ArcFileInfo::Uncompressed {
-                        offset: stream_offset_entry.offset,
-                        size: stream_offset_entry.size,
+                        data: FileSlice::new(offset, size),
                         flags: stream_file.flags,
                     }
                 );
@@ -344,6 +375,26 @@ impl<'a> Arc {
         }
     }
 
+    fn get_file_compressed(arc: &ArcInternal, file_info: &FileInfo2) -> (FileSlice<u8>, u64) {
+        let file_index = arc.file_info_indices[file_info.hash_index_2 as usize];
+        let file_info = if file_info.flags & REDIRECT != 0 {
+            &arc.file_infos_v2[file_index.file_info_index as usize]
+        } else {
+            file_info
+        };
+
+        let sub_index = arc.file_info_sub_index[file_info.sub_file_index as usize];
+        
+        let sub_file = arc.sub_files[sub_index.sub_file_index as usize];
+        let dir_offset = arc.folder_offsets[sub_index.folder_offset_index as usize];
+
+        let offset = arc.arc_header.file_section_offset as usize +
+                        dir_offset.offset as usize +
+                        ((sub_file.offset as usize) << 2);
+
+        (FileSlice::new(offset, sub_file.comp_size as usize), sub_file.decomp_size as u64)
+    }
+
     fn load_compressed_files(&mut self, arc: &ArcInternal) {
         for file_info in arc.file_infos_v2 {
             let path = arc.file_info_paths[file_info.hash_index as usize];
@@ -354,9 +405,12 @@ impl<'a> Arc {
 
             let last = self.add_dirs(path_string, &path_components);
 
+            let (data, decomp_size) = Arc::get_file_compressed(arc, file_info);
             self.files.insert(
                 file_hash40,
-                ArcFileInfo::Compressed
+                ArcFileInfo::Compressed {
+                    data, decomp_size
+                }
             );
             let parent = self.dir_children
                 .get_mut(&Arc::hash40(last))
@@ -372,4 +426,18 @@ impl<'a> Arc {
     }
 }
 
-const REGIONAL: u32 = 0x00000010;
+const REDIRECT: u32 = 0x00000010;
+
+pub enum FileSliceOrVec {
+    FileSlice(FileSlice<u8>),
+    Vec(Vec<u8>)
+}
+
+impl FileSliceOrVec {
+    pub fn get_slice(&self) -> &[u8] {
+        match self {
+            Self::FileSlice(file_slice) => &file_slice,
+            Self::Vec(vec) => &vec
+        }
+    }
+}

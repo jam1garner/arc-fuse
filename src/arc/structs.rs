@@ -110,7 +110,8 @@ pub struct FileInformationPath {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileInformationIndex {
-    pub some_indices: [u32; 2]
+    pub dir_offset_index: u32,
+    pub file_info_index: u32,
 }
 
 #[repr(C)]
