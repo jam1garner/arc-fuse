@@ -6,8 +6,6 @@ use std::borrow::Borrow;
 use std::sync::RwLock;
 use std::ops::Add;
 
-use serde::{Serialize, Deserialize};
-
 #[cfg(test)]
 mod test;
 
@@ -36,7 +34,7 @@ pub fn get_file_size() -> usize {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 pub struct FilePtr<P: Num, T: Sized>(P, PhantomData<T>);
 
 pub type FilePtr8<T> = FilePtr<u8, T>;
@@ -44,7 +42,7 @@ pub type FilePtr16<T> = FilePtr<u16, T>;
 pub type FilePtr32<T> = FilePtr<u32, T>;
 pub type FilePtr64<T> = FilePtr<u64, T>;
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 pub struct FileSlice<T: Sized>(usize, usize, PhantomData<[T]>);
 
 impl<P: Num, T> FilePtr<P, T> {

@@ -31,9 +31,7 @@ struct ArcFS {
 
 impl ArcFS {
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        Ok(Self {
-            arc: arc::Arc::open(path)?,
-        })
+        Ok(Self { arc: arc::Arc::open(path)?})
     }
 }
 
@@ -50,7 +48,7 @@ impl Filesystem for ArcFS {
                 if a.len() != 0 { "/" } else { "" } +
                 name.to_str().unwrap();
             
-            let hash40 = arc::Arc::hash40(&file_path);
+            let hash40 = arc::hash40(&file_path);
             match self.arc.files.get(&hash40) {
                 Some(arc::ArcFileInfo::Directory) => {
                     reply.entry(&TTL, &FileAttr {
