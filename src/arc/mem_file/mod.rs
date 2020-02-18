@@ -88,6 +88,10 @@ impl<T> FileSlice<T> {
         FilePtr(self.0, PhantomData)
     }
 
+    pub fn as_byte_file_slice(&self) -> FileSlice<u8> {
+        FileSlice(self.0, self.1 * size_of::<T>(), PhantomData)
+    }
+
     pub fn next<U: Sized>(&self) -> FilePtr<usize, U> {
         FilePtr(self.0 + (size_of::<T>() * self.1), PhantomData)
     }

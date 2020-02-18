@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::path::Path;
 use std::fs::File;
@@ -18,12 +18,6 @@ use packed_struct::prelude::*;
 use cached::{cached_key, SizedCache};
 
 static HASH_STRINGS: ArcStr = include_str!("hash40s.tsv");
-
-macro_rules! unwrap_or_continue {
-    ($expr:expr) => {
-        if let Some(x) = $expr { x } else { continue }
-    };
-}
 
 //include!(concat!(env!("OUT_DIR"), "/hash40s.rs"));
 
@@ -78,10 +72,9 @@ pub struct Arc {
     pub map: Mmap,
     pub names: HashMap<u64, ArcStr>,
     pub stream_paths: HashMap<u64, ArcStr>,
-    pub dir_children: HashMap<u64, Vec<u64>>,
+    pub dir_children: HashMap<u64, HashSet<u64>>,
     pub files: HashMap<u64, ArcFileInfo>,
     pub stems: HashMap<u64, ArcStr>,
-    pub used_hashes: HashMap<u64, ArcStr>,
 }
 
 impl<'a> Arc {
@@ -97,7 +90,6 @@ impl<'a> Arc {
             dir_children: HashMap::new(),
             files: HashMap::new(),
             stems: HashMap::new(),
-            used_hashes: HashMap::new(),
         };
 
         set_file(&*arc.map);
@@ -126,7 +118,8 @@ impl<'a> Arc {
 
         // streamNameToHash
         let stream_entries_ptr = stream_hashes.next_slice::<[u8; 0xC]>(count);
-        let stream_entries = stream_entries_ptr.iter()
+        let stream_entries = stream_entries_ptr
+                                .iter()
                                 .map(|a| StreamEntry::unpack(a))
                                 .collect::<Result<Vec<_>, _>>().unwrap();
         //println!("streamNameToHash: {:X}", stream_entries_ptr.inner_ptr());
@@ -149,10 +142,12 @@ impl<'a> Arc {
 
         // fileInfoUnknownTable
         let file_info_unks = unk_counts.next_slice::<FileInformationUnknownTable>(unk_counts[1] as usize);
+        std::fs::write("fileInfoUnknownTable.bin", &*file_info_unks.as_byte_file_slice()).unwrap();
         //println!("fileInfoUnknownTable: {:X}", file_info_unks.inner_ptr());
 
         // filePathToIndexHashGroup
         let hash_index_groups = file_info_unks.next_slice::<HashIndexGroup>(unk_counts[0] as usize);
+        std::fs::write("filePathToIndexHashGroup.bin", &*hash_index_groups.as_byte_file_slice()).unwrap();
         //println!("filePathToIndexHashGroup: {:X}", hash_index_groups.inner_ptr());
 
         // fileInfoPath
@@ -308,36 +303,38 @@ impl<'a> Arc {
     }
     
     fn load_hashes(&mut self) {
-        self.names = HASH_STRINGS.split('\n')
-            .filter_map(|line|{
-                let split: Vec<ArcStr> = line.split('\t').collect();
-                if let &[hash, string] = &split[..] {
-                    Some((u64::from_str_radix(hash, 16).ok()?, string))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        self.names =
+            HASH_STRINGS
+                .par_split('\n')
+                .filter_map(|line|{
+                    let split: Vec<ArcStr> = line.split('\t').collect();
+                    if let &[hash, string] = &split[..] {
+                        Some((u64::from_str_radix(hash, 16).ok()?, string))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
     }
 
     fn add_dir(&mut self, parent: ArcStr, dir: ArcStr) -> u64 {
         let dirs = &mut self.dir_children;
-        let parent_hash40 = hash40(parent);
-        let dir_hash40 = hash40(dir);
+        let (parent_hash40, dir_hash40) = (hash40(parent), hash40(dir));
         if !dirs.contains_key(&parent_hash40) {
-            dirs.insert(parent_hash40, vec![]);
+            dirs.insert(parent_hash40, HashSet::new());
         }
         let parent_children = dirs.get_mut(&parent_hash40).unwrap();
-        if dir_hash40 != 0 && !parent_children.contains(&dir_hash40) {
-            parent_children.push(dir_hash40);
+        if dir_hash40 != 0 {
+            parent_children.insert(dir_hash40);
         }
 
         if !dirs.contains_key(&dir_hash40) {
-            dirs.insert(dir_hash40, vec![]);
+            dirs.insert(dir_hash40, HashSet::new());
         }
-        self.files.insert(dir_hash40, ArcFileInfo::Directory);
+
         self.stems.insert(dir_hash40, dir.rsplit("/").nth(0).unwrap());
         self.stream_paths.insert(dir_hash40, dir);
+        self.files.insert(dir_hash40, ArcFileInfo::Directory);
 
         dir_hash40
     }
@@ -359,7 +356,7 @@ impl<'a> Arc {
     }
 
     fn load_stream_files(&mut self, arc: &ArcInternal) {
-        self.dir_children.insert(0, vec![]);
+        self.dir_children.insert(0, HashSet::new());
         self.names.insert(0, "");
         self.stems.insert(0, "");
         self.files.insert(0, ArcFileInfo::Directory);
@@ -382,7 +379,7 @@ impl<'a> Arc {
                 self.dir_children
                     .get_mut(&last)
                     .unwrap()
-                    .push(hash40);
+                    .insert(hash40);
                 self.stems.insert(
                     hash40,
                     path_components.last().unwrap()
@@ -414,9 +411,9 @@ impl<'a> Arc {
     }
 
     fn load_compressed_files(&mut self, arc: &ArcInternal) {
-
         let file_infos: Vec<_> =
-            arc.file_infos_v2.par_iter()
+            arc.file_infos_v2
+                .par_iter()
                 .filter_map(|file_info|{
                     let path = arc.file_info_paths[file_info.hash_index as usize];
                     let file_hash40 = path.path.hash40();
@@ -428,59 +425,62 @@ impl<'a> Arc {
                 })
                 .collect();
 
+        let file_infos: Vec<_> =
+            file_infos
+                .into_iter()
+                .map(|(file_hash40, path_string, path_components, data, decomp_size)|{
+                    let last = self.add_dirs(path_string, &path_components);
+                    (file_hash40, path_string, path_components, data, decomp_size, last)
+                })
+                .collect();
+
         let dir_children = Mutex::new(&mut self.dir_children);
         let stems = Mutex::new(&mut self.stems);
         let files = Mutex::new(&mut self.files);
         rayon::join(
             || rayon::join(
                 || {
-                    files.lock().unwrap().par_extend(
-                        file_infos
-                            .par_iter()
-                            .map(|&(hash40, _, _, data, decomp_size)|(
-                                hash40,
-                                ArcFileInfo::Compressed {
-                                    data, decomp_size
-                                }
-                            ))
-                    );
+                    files
+                        .lock()
+                        .unwrap()
+                        .par_extend(
+                            file_infos
+                                .par_iter()
+                                .map(|&(hash40, .., data, decomp_size, _)|(
+                                    hash40,
+                                    ArcFileInfo::Compressed {
+                                        data, decomp_size
+                                    }
+                                ))
+                        );
                 },
                 || {
-                    stems.lock().unwrap().par_extend(file_infos.par_iter().map(|_| (0, "")));
+                    stems
+                        .lock()
+                        .unwrap()
+                        .par_extend(
+                            file_infos
+                                .par_iter()
+                                .map(|&(hash40, _, ref path_components, ..)| {(
+                                    hash40,
+                                    *path_components.last().unwrap()
+                                )})
+                        );
                 }
             ),
             || {
-                let files = dir_children.lock().unwrap();
+                file_infos
+                    .par_iter()
+                    .for_each(|&(hash40, .., last )|{
+                        dir_children
+                            .lock()
+                            .unwrap()
+                            .get_mut(&last)
+                            .unwrap()
+                            .insert(hash40);
+                    });
             }
         );
-
-        for file_info in arc.file_infos_v2 {
-            let path = arc.file_info_paths[file_info.hash_index as usize];
-            let file_hash40 = path.path.hash40();
-            let path_string = unwrap_or_continue!(self.get_name(file_hash40));
-
-            let path_components = path_string.split('/').collect();
-
-            let last = self.add_dirs(path_string, &path_components);
-
-            let (data, decomp_size) = Arc::get_file_compressed(arc, file_info);
-            self.files.insert(
-                file_hash40,
-                ArcFileInfo::Compressed {
-                    data, decomp_size
-                }
-            );
-            let parent = self.dir_children
-                .get_mut(&last)
-                .unwrap();
-            if !parent.contains(&file_hash40) {
-                parent.push(file_hash40);
-            }
-            self.stems.insert(
-                file_hash40,
-                path_components.last().unwrap()
-            );
-        }
     }
 }
 

@@ -221,3 +221,36 @@ impl HashIndexGroup {
         self.hash as u64 + ((self.index as u64 & 0xFF) << 32)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn check_sizes() {
+        use std::mem::size_of;
+        let size_of_quick_dir = 12;
+        dbg!(
+            size_of::<ArcHeader>(),
+            size_of::<CompTableHeader>(),
+            size_of::<FileSystemHeader>(),
+            size_of::<StreamHeader>(),
+            size_of_quick_dir,
+            size_of::<StreamEntry>(),
+            size_of::<StreamOffsetEntry>(),
+            size_of::<FileInformationPath>(),
+            size_of::<FileInformationIndex>(),
+            size_of::<SomeFolderThing>(),
+            size_of::<Hash40>(),
+            size_of::<DirectoryInfo>(),
+            size_of::<DirectoryOffsets>(),
+            size_of::<FolderHashIndex>(),
+            size_of::<FileInfo2>(),
+            size_of::<FileInfoSubIndex>(),
+            size_of::<SubFileInfo>(),
+            size_of::<StreamHashToName>(),
+            size_of::<FileInformationUnknownTable>(),
+            size_of::<HashIndexGroup>(),
+        );
+    }
+}

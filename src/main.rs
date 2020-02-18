@@ -31,17 +31,28 @@ struct ArcFS {
 
 impl ArcFS {
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        Ok(Self { arc: arc::Arc::open(path)?})
+        Ok(Self { arc: arc::Arc::open(path)? })
     }
 }
 
 impl Filesystem for ArcFS {
     fn init(&mut self, _req: &Request) -> Result<(), i32> {
         println!("Arc successfully mounted");
+        #[cfg(feature="print")]
+        {
+            let inode: &u64 = &env::args_os().nth(3).unwrap().to_str().unwrap().parse().unwrap();
+            let name = self.arc.names.get(inode);
+            let stream_path = self.arc.stream_paths.get(inode);
+            let dir_children = self.arc.dir_children.get(inode);
+            let file = self.arc.files.get(inode);
+            let stem = self.arc.stems.get(inode);
+            dbg!(name, stream_path, stem, file, dir_children);
+            std::process::exit(0);
+        }
         Ok(())
     }
 
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let parent = if parent == 1 { 0 } else { parent };
         if let Some(a) = self.arc.get_name(parent) {
             let file_path = String::from(a) +
@@ -62,8 +73,8 @@ impl Filesystem for ArcFS {
                             kind: FileType::Directory,
                             perm: 0o755,
                             nlink: 2,
-                            uid: 501,
-                            gid: 20,
+                            uid: req.uid(),
+                            gid: req.gid(),
                             rdev: 0,
                             flags: 0, 
                     }, 0);
@@ -80,8 +91,8 @@ impl Filesystem for ArcFS {
                         kind: FileType::RegularFile,
                         perm: 0o644,
                         nlink: 1,
-                        uid: 501,
-                        gid: 20,
+                        uid: req.uid(),
+                        gid: req.gid(),
                         rdev: 0,
                         flags: 0, 
                     }, 0);
@@ -98,8 +109,8 @@ impl Filesystem for ArcFS {
                         kind: FileType::RegularFile,
                         perm: 0o644,
                         nlink: 1,
-                        uid: 501,
-                        gid: 20,
+                        uid: req.uid(),
+                        gid: req.gid(),
                         rdev: 0,
                         flags: 0, 
                     }, 0);
@@ -120,7 +131,7 @@ impl Filesystem for ArcFS {
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, req: &Request, ino: u64, reply: ReplyAttr) {
         let ino = if ino == 1 { 0 } else { ino };
         match self.arc.files.get(&ino) {
             Some(arc::ArcFileInfo::Directory) => {
@@ -135,8 +146,8 @@ impl Filesystem for ArcFS {
                         kind: FileType::Directory,
                         perm: 0o755,
                         nlink: 2,
-                        uid: 501,
-                        gid: 20,
+                        uid: req.uid(),
+                        gid: req.gid(),
                         rdev: 0,
                         flags: 0, 
                 });
@@ -153,8 +164,8 @@ impl Filesystem for ArcFS {
                     kind: FileType::RegularFile,
                     perm: 0o644,
                     nlink: 1,
-                    uid: 501,
-                    gid: 20,
+                    uid: req.uid(),
+                    gid: req.gid(),
                     rdev: 0,
                     flags: 0, 
                 });
@@ -171,8 +182,8 @@ impl Filesystem for ArcFS {
                     kind: FileType::RegularFile,
                     perm: 0o644,
                     nlink: 1,
-                    uid: 501,
-                    gid: 20,
+                    uid: req.uid(),
+                    gid: req.gid(),
                     rdev: 0,
                     flags: 0, 
                 });
@@ -188,9 +199,9 @@ impl Filesystem for ArcFS {
         }
     }
 
-    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
+    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, _offset: i64, _size: u32, reply: ReplyData) {
         if let Some(data) = self.arc.get_file_data(ino) {
-            reply.data(&data.get_slice()[offset as usize..offset as usize + size as usize]);
+            reply.data(&data.get_slice());
         } else {
             dbg!("Failed to get data");
             reply.error(ENOENT);
@@ -249,9 +260,8 @@ fn get_args() -> Option<(std::ffi::OsString, std::ffi::OsString)> {
 
 fn main() {
     env_logger::init();
-
     if let Some((arc_path, mountpoint)) = get_args() {
-        let options = ["-o", "ro", "-o", "fsname=hello"]
+        let options = ["-o", "ro", "-o", "fsname=hello", "-o", "auto_unmount", "-o", "allow_other"]
             .iter()
             .map(|o| o.as_ref())
             .collect::<Vec<&OsStr>>();
