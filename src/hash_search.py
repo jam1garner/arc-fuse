@@ -9,6 +9,6 @@ with open('hashes.txt', 'r') as f:
 
 while True:
     try:
-        print(crcs[int(input("hash: "), 16)])
+        print(crcs[int(input("hash: "), 16) & 0xFFFFFFFF])
     except Exception(e):
         print(e)

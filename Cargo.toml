@@ -20,6 +20,9 @@ timeit = "0.1.2"
 rayon = "1.3"
 #hash40s = { path="./hash40s" }
 
+[features]
+print = []
+
 [profile.release]
 debug = true
 

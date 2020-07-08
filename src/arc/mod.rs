@@ -142,12 +142,12 @@ impl<'a> Arc {
 
         // fileInfoUnknownTable
         let file_info_unks = unk_counts.next_slice::<FileInformationUnknownTable>(unk_counts[1] as usize);
-        std::fs::write("fileInfoUnknownTable.bin", &*file_info_unks.as_byte_file_slice()).unwrap();
+        //std::fs::write("fileInfoUnknownTable.bin", &*file_info_unks.as_byte_file_slice()).unwrap();
         //println!("fileInfoUnknownTable: {:X}", file_info_unks.inner_ptr());
 
         // filePathToIndexHashGroup
         let hash_index_groups = file_info_unks.next_slice::<HashIndexGroup>(unk_counts[0] as usize);
-        std::fs::write("filePathToIndexHashGroup.bin", &*hash_index_groups.as_byte_file_slice()).unwrap();
+        //std::fs::write("filePathToIndexHashGroup.bin", &*hash_index_groups.as_byte_file_slice()).unwrap();
         //println!("filePathToIndexHashGroup: {:X}", hash_index_groups.inner_ptr());
 
         // fileInfoPath

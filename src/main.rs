@@ -199,9 +199,12 @@ impl Filesystem for ArcFS {
         }
     }
 
-    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, _offset: i64, _size: u32, reply: ReplyData) {
+    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
         if let Some(data) = self.arc.get_file_data(ino) {
-            reply.data(&data.get_slice());
+            let data = data.get_slice();
+            let start = offset as usize;
+            let end = usize::min((offset as usize) + (size as usize), data.len());
+            reply.data(&data[start..end]);
         } else {
             dbg!("Failed to get data");
             reply.error(ENOENT);
