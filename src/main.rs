@@ -34,10 +34,9 @@ impl Filesystem for ArcFS {
 
         let labels = arc::GLOBAL_LABELS.read();
         if let Some(parent_str) = Hash40(parent).label(&labels) {
-            let file_path = format!("{}/{}", parent_str, name.to_str().unwrap().trim_end_matches('/'));
-            let file_path = file_path.trim_start_matches('/');
+            let mut file_path = format!("{}/{}", parent_str.trim_end_matches('/'), name.to_str().unwrap());
             
-            let hash40 = arc::hash40(file_path);
+            let hash40 = arc::hash40(file_path.trim_start_matches('/'));
             match self.arc.get_file_metadata(hash40)  {
                 Ok(file_metadata) => {
                     reply.entry(&Duration::from_secs(1), &FileAttr {
@@ -56,7 +55,6 @@ impl Filesystem for ArcFS {
                         rdev: 0,
                         flags: 0, 
                     }, 0);
-                    return;
                 }
                 Err(arc::LookupError::Missing) => {
                     // No file exists, look for directory
@@ -77,10 +75,31 @@ impl Filesystem for ArcFS {
                                 rdev: 0,
                                 flags: 0, 
                         }, 0);
-                        return;
                     } else {
-                        // Does not exist
-                        reply.error(ENOENT);
+                        file_path.push('/');
+                        let hash40 = arc::hash40(file_path.trim_start_matches('/'));
+                        // Try dir with a trailing "/"
+                        if self.arc.get_dir_listing(hash40).is_some() {
+                            reply.entry(&Duration::from_secs(1), &FileAttr {
+                                    ino: hash40.as_u64(),
+                                    size: 0,
+                                    blocks: 0,
+                                    atime: UNIX_EPOCH,
+                                    mtime: UNIX_EPOCH,
+                                    ctime: UNIX_EPOCH,
+                                    crtime: UNIX_EPOCH,
+                                    kind: FileType::Directory,
+                                    perm: 0o755,
+                                    nlink: 2,
+                                    uid: req.uid(),
+                                    gid: req.gid(),
+                                    rdev: 0,
+                                    flags: 0, 
+                            }, 0);
+                        } else {
+                            // Does not exist
+                            reply.error(ENOENT);
+                        }
                     }
                 }
                 Err(err) => {
@@ -88,32 +107,6 @@ impl Filesystem for ArcFS {
                 }
             }
         }
-
-        /*for sibling in self.arc.get_dir_listing(parent).unwrap_or(&[]) {
-            match sibling {
-                arc::FileNode::Dir(dir) => {
-                    reply.entry(&Duration::from_secs(1), &FileAttr {
-                            ino: hash40.as_u64(),
-                            size: 0,
-                            blocks: 0,
-                            atime: UNIX_EPOCH,
-                            mtime: UNIX_EPOCH,
-                            ctime: UNIX_EPOCH,
-                            crtime: UNIX_EPOCH,
-                            kind: FileType::Directory,
-                            perm: 0o755,
-                            nlink: 2,
-                            uid: req.uid(),
-                            gid: req.gid(),
-                            rdev: 0,
-                            flags: 0, 
-                    }, 0);
-                }
-                arc::FileNode::File(file) => {
-                    if self.arc.get_file_metadata(hash)
-                }
-            }
-        }*/
     }
 
     fn getattr(&mut self, req: &Request, ino: u64, reply: ReplyAttr) {

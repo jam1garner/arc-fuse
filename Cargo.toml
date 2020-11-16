@@ -7,7 +7,8 @@ edition = "2018"
 [dependencies]
 libc = "0.2.51"
 fuse = { git = "https://github.com/jam1garner/fuse-rs", branch = "log_bump" }
-smash-arc = { git = "https://github.com/jam1garner/smash-arc", features = ["libzstd"] }
+#smash-arc = { git = "https://github.com/jam1garner/smash-arc", features = ["libzstd"] }
+smash-arc = { path = "../smash-arc", features = ["libzstd"] }
 
 [features]
 print = []
